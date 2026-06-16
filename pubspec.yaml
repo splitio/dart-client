@@ -33,10 +33,10 @@ melos:
     collect-coverage:
       run: |
         find packages -name "*.dart" -path "*/lib/*.dart" -not -path "*/lib/src/*" -not -path "*/e2e/*" | while read f; do
-          grep -q "^export " "$f" && sed -i '' '/^\/\/ coverage:ignore-file$/d' "$f"
+          grep -q "^export " "$f" && sed -i.bak '/^\/\/ coverage:ignore-file$/d' "$f" && rm -f "${f}.bak"
         done
         dart run melos exec --ignore=e2e -- dart test --coverage=coverage
-        dart run melos exec --ignore=e2e -- dart run coverage:format_coverage --packages=.dart_tool/package_config.json --lcov --check-ignore --report-on=lib --ignore-files=**.pub-cache** --ignore-files=**test** -i coverage/test -o coverage/lcov.info
+        dart run melos exec --ignore=e2e -- dart run coverage:format_coverage --package=. --lcov --check-ignore --report-on=lib '--ignore-files=**.pub-cache**' '--ignore-files=**test**' -i coverage/test -o coverage/lcov.info
         mkdir -p coverage
         find packages -name lcov.info -not -path "*/e2e/*" | xargs cat > coverage/lcov.info
         awk '/^DA:/{split($0,a,","); if(a[2]+0>0) hit++; total++} END{if(total==0){print "Coverage: N/A (no instrumented lines)"; exit 0} pct=hit/total*100; printf "Coverage: %.2f%%\n", pct; if(pct < 80) {print "FAIL: below 80% threshold"; exit 1}}' coverage/lcov.info
