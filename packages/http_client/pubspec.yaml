@@ -1,0 +1,14 @@
+name: http_client
+description: Buffered HTTP request/response abstraction (Axis-1 SPI).
+version: 0.0.1
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  http: ^1.1.0
+  fetch_client: ^1.1.1
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^3.0.0

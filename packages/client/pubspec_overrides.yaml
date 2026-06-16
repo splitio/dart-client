@@ -1,0 +1,12 @@
+# melos_managed_dependency_overrides: engine,local,models,parsing,storage
+dependency_overrides:
+  engine:
+    path: ../engine
+  local:
+    path: ../local
+  models:
+    path: ../models
+  parsing:
+    path: ../parsing
+  storage:
+    path: ../storage

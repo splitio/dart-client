@@ -1,5 +1,16 @@
 # Claude Code local settings
 .claude/settings.local.json
 
+# Package lock files (root pubspec.lock is committed; individual packages are not)
+packages/**/pubspec.lock
+
+# Build and generated artifacts
+.dart_tool/
+.idea/
+*.iml
+build/
+coverage/
+.packages
+
 # OS
 .DS_Store

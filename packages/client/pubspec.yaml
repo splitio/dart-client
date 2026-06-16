@@ -1,0 +1,20 @@
+name: client
+description: Public SplitClient (bound target), ClientManager (per-Key registry), setTarget. CS-specific. One client per Key (or global in SS, future). Ref-counts shared sync.
+version: 0.0.1
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  models:
+    path: ../models
+  engine:
+    path: ../engine
+  local:
+    path: ../local
+  storage:
+    path: ../storage
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^3.0.0

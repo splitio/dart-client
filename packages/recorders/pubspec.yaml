@@ -1,0 +1,14 @@
+name: recorders
+description: Impression, event, unique-keys, impression-count recorders. Queue → batch → flush. Generic pipeline. Dedup and observer patterns for impressions.
+version: 0.0.1
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  models:
+    path: ../models
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^3.0.0

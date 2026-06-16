@@ -1,0 +1,16 @@
+name: e2e
+description: External test harness simulating a consumer of the published SDK. Validates the entire SDK from outside.
+version: 0.0.1
+publish_to: none
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  split_sdk:
+    path: ../single-sdk
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^3.0.0
+  mock_http_server: ^4.1.1

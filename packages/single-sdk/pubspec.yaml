@@ -1,0 +1,16 @@
+name: split_sdk
+description: Split feature-flag SDK for Dart (client-side, single-tenant). Synchronous evaluation, streaming sync, impressions, and events.
+version: 0.0.1
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  sdk_internal:
+    path: ../sdk_internal
+  models:
+    path: ../models
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^3.0.0

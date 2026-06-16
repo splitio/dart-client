@@ -1,0 +1,14 @@
+name: auth
+description: Per-endpoint credential provisioning (auth strategy + JWT caching). Leaf module. On-demand credential fetch (no periodic refresh). Handles JWT expiry/invalidation.
+version: 0.0.1
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  models:
+    path: ../models
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^3.0.0

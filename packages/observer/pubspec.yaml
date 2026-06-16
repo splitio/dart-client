@@ -1,0 +1,10 @@
+name: observer
+description: Generic pub/sub primitive (dependency-free, no I/O). Decouples internal emitters (factory, sync, streaming, HTTP, auth, recorders) from consumers.
+version: 0.0.1
+
+environment:
+  sdk: ^3.0.0
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^3.0.0
