@@ -1,5 +1,8 @@
 name: client
 description: Public SplitClient (bound target), ClientManager (per-Key registry), setTarget. CS-specific. One client per Key (or global in SS, future). Ref-counts shared sync.
+
+# TODO: remove once ready to publish to pub.dev
+publish_to: none
 version: 0.0.1
 
 environment:

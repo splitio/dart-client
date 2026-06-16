@@ -1,5 +1,8 @@
 name: recorders
 description: Impression, event, unique-keys, impression-count recorders. Queue → batch → flush. Generic pipeline. Dedup and observer patterns for impressions.
+
+# TODO: remove once ready to publish to pub.dev
+publish_to: none
 version: 0.0.1
 
 environment:

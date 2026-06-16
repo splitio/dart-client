@@ -1,5 +1,8 @@
 name: logger
 description: Logging abstraction (Logger, LogLevel) over package:logging. Leaf utility used across the SDK.
+
+# TODO: remove once ready to publish to pub.dev
+publish_to: none
 version: 0.0.1
 
 environment:

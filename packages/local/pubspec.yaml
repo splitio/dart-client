@@ -1,5 +1,8 @@
 name: local
 description: Binds engine and storage for LOCAL evaluation. Implements Evaluator port and EvaluationContext over stores. Central place for store lookups, recursive evaluation, and segment membership dispatch.
+
+# TODO: remove once ready to publish to pub.dev
+publish_to: none
 version: 0.0.1
 
 environment:

@@ -1,5 +1,8 @@
 name: sync
 description: Inbound freshness coordinator—SyncManager, FeedSynchronizer, streaming FSM, on-demand fetch coordinator, sync delays. Pure FSM (StreamingPolicy) separated from effect runtime. Coordinates rules + memberships convergence.
+
+# TODO: remove once ready to publish to pub.dev
+publish_to: none
 version: 0.0.1
 
 environment:

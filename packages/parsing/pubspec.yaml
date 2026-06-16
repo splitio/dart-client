@@ -1,5 +1,8 @@
 name: parsing
 description: Wire DTO → ParsedSplit, wire rules → TargetingRule, unsupported-matcher detection.
+
+# TODO: remove once ready to publish to pub.dev
+publish_to: none
 version: 0.0.1
 
 environment:
