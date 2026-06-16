@@ -13,4 +13,4 @@ dependencies:
 dev_dependencies:
   test: ^1.24.0
   lints: ^3.0.0
-  mock_http_server: ^4.1.1
+  mock_http_server: ^1.0.0

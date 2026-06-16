@@ -11,6 +11,7 @@ packages/**/pubspec.lock
 build/
 coverage/
 .packages
+pubspec.lock
 
 # OS
 .DS_Store

@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+# Run global harness hooks if present
+GLOBAL_HOOK="/opt/harness/claude-code/git-hooks/pre-commit"
+if [ -x "$GLOBAL_HOOK" ]; then
+  "$GLOBAL_HOOK"
+fi
+
+export PATH="/opt/homebrew/bin:$PATH"
+
+echo "Running dart format..."
+dart run melos run format
+
+echo "Running collect-coverage..."
+dart run melos run collect-coverage
