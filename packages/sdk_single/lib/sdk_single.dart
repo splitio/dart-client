@@ -1,4 +1,4 @@
-library split_sdk;
+library sdk_single;
 
 // Re-export public API from internal wiring
 // export 'src/split_factory.dart';

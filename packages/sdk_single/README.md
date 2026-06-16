@@ -1,11 +1,11 @@
-# split_sdk
+# sdk_single
 
 Split feature-flag SDK for Dart (client-side, single-tenant topology). Synchronous evaluation, streaming sync with polling fallback, impressions, and events.
 
 ## Public API
 
 ```dart
-import 'package:split_sdk/split_sdk.dart';
+import 'package:sdk_single/sdk_single.dart';
 
 final factory = SplitFactory.create(sdkKey, config);
 final client = factory.client(targetKey: 'user123');

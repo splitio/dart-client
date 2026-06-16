@@ -13,7 +13,7 @@ Target platforms: **All Dart targets** — Dart VM, Flutter (Android, iOS, Web, 
 
 - **Build tool**: Melos (Dart workspaces)
 - **Root pubspec**: `pubspec.yaml` (dev-only, defines dev_dependencies)
-- **Build all packages**: `melos build` or `dart pub get` (in each package)
+- **Build all packages**: `dart pub get` (in each package) — no `melos build` script exists
 - **Build specific package**: `cd packages/[package-name] && dart pub get`
 - **Clean all**: `melos clean`
 - **Get all dependencies**: `melos bootstrap`
@@ -69,6 +69,11 @@ Target platforms: **All Dart targets** — Dart VM, Flutter (Android, iOS, Web, 
 - Don't modify version numbers manually — use semantic versioning
 - Don't create new packages at the root level; always place them under `packages/`
 
+## Commit Message Rules
+
+- Format: `feat|fix|chore|test|docs|refactor: [JIRA-xxx]: Description`
+- **NEVER add `Co-Authored-By` lines** to commit messages — not for any tool, agent, or assistant
+
 ## Commands to Never Run
 
 - `git push --force origin main`
@@ -95,9 +100,11 @@ dart-client/
 │   ├── parsing/              # Data parsing utilities
 │   ├── recorders/            # Event recording and metrics
 │   ├── observer/             # Observability (logging, tracing)
+│   ├── logger/               # Logging abstraction over package:logging
+│   ├── events/               # Readiness/lifecycle manager (latched events)
 │   ├── sdk_internal/         # Internal DI/wiring root; assembles all layers (not published directly)
 │   ├── local/                # Local data handling
-│   ├── single-sdk/           # Public SDK entry point (the package users install)
+│   ├── sdk_single/           # Public SDK entry point (the package users install)
 │   └── e2e/                  # End-to-end integration tests
 ├── test/                     # Root-level tests (if any)
 └── docs/                     # Documentation
@@ -109,7 +116,7 @@ Based on recent activity and architecture:
 
 | Package | Purpose | Priority |
 |---------|---------|----------|
-| `packages/single-sdk` | Public SDK entry point; the package users install | High |
+| `packages/sdk_single` | Public SDK entry point; the package users install | High |
 | `packages/sdk_internal` | Internal DI/wiring root; assembles all layers | High |
 | `packages/client` | Internal per-key SplitClient/ClientManager building block | High |
 | `packages/auth` | Authentication logic; security-critical | High |
@@ -129,7 +136,9 @@ Based on recent activity and architecture:
 - **`melos clean`** — Remove build artifacts from all packages
 - **`melos analyze`** — Run dart analyze on all packages
 - **`melos test`** — Run tests in all packages
-- **`melos pub publish`** — Publish packages to pub.dev (with workflow prompts)
+- **`melos format`** — Format all packages
+- **`melos collect-coverage`** — Run coverage, merge, enforce 80% threshold
+- **`melos publish`** — Publish packages to pub.dev (with workflow prompts)
 
 ## Package-Level Guidelines
 
@@ -156,6 +165,8 @@ This codebase uses specialized Dart skills available in Claude Code:
 - **`dart-resolve-package-conflicts`** — Debug and resolve version conflicts
 - **`dart-setup-ffi-assets`** — Configure FFI (Foreign Function Interface) bindings
 - **`dart-use-ffigen`** — Generate Dart bindings for C libraries
+- **`update-spec`** — Guided workflow for changing `docs/SDK-Specification-v1-RFC2119.md`: enforces grill-me before drafting, RFC 2119 language, language-agnostic scope, and user approval before edits
+- **`patch-a-bug`** — Workflow for fixing discovered bugs: write failing e2e test first, check spec for contradictions (invoke `update-spec` if needed), then TDD fix with Tidy First discipline
 
 Use these skills when appropriate for your tasks — they handle Dart-specific complexity.
 
@@ -163,12 +174,25 @@ Use these skills when appropriate for your tasks — they handle Dart-specific c
 
 **Tidy First, then TDD. RED → GREEN → REFACTOR.**
 
+### New Features
+
 Before implementing any feature:
-1. **Tidy First** — make any structural changes (rename, move, extract interface) as separate commits before adding behavior. Never mix structural and behavioral changes in the same commit.
-2. **Write the e2e test first** (in `packages/e2e`) — it MUST fail before any implementation exists.
-3. **Write failing unit tests** for the affected packages.
-4. **Implement** the minimum code to make tests pass (GREEN).
-5. **Refactor** — clean up with tests green; commit separately.
+1. **Write the e2e test first** (in `packages/e2e`) if the feature has externally visible behavior — public API changes, observable HTTP requests (via `MockWebServer`), storage side-effects, or any input-to-output behavior at the SDK boundary. It MUST fail before any implementation exists. Commit it alone. Pure internal logic (private helpers, internal algorithms) does not require an e2e test.
+2. **Check the spec**: Read `docs/SDK-Specification-v1-RFC2119.md` for the relevant section. If the spec is silent or contradicts the plan, resolve it with `update-spec` before writing code.
+3. **Tidy First** — make any structural changes (rename, move, extract interface) as separate commits before adding behavior. Never mix structural and behavioral changes in the same commit.
+4. **Write failing unit tests** for the affected packages.
+5. **Implement** the minimum code to make tests pass (GREEN).
+6. **Refactor** — clean up with tests green; commit separately.
+
+### Bug Fixes & Patches
+
+Use the **`patch-a-bug`** skill. Bug fixes have a different flow from features because they may expose spec oversights in addition to implementation errors:
+
+1. **Step 0 — Failing test first**: If the bug is externally visible (wrong public API behavior, incorrect HTTP requests, storage side-effects), write a failing e2e test in `packages/e2e` before touching any implementation. Commit it alone. Internal-only bugs get a failing unit test in the affected package instead.
+2. **Check the spec**: Read `docs/SDK-Specification-v1-RFC2119.md` for the relevant section. If the spec describes the broken behavior, use `update-spec` to correct it before fixing code. Spec and fix land together.
+3. **Tidy First** if structural changes are needed — separate commit, no behavior change.
+4. **Minimal fix** — RED → GREEN → REFACTOR.
+5. **`melos test`** — no regressions across all packages.
 
 ## e2e Testing Requirements
 
@@ -206,7 +230,7 @@ The approved external dependencies for this project are defined in `docs/deps.md
 
 ## Public API Stability
 
-The public API surface (defined in `packages/single-sdk` and specified in `docs/SDK-Specification-v1-RFC2119.md` §7) MUST NOT be changed casually. This includes `SplitFactory`, `SplitClient`, `SplitManager`, `SplitView`, `SplitClientConfig`, and all their method signatures and return types.
+The public API surface (defined in `packages/sdk_single` and specified in `docs/SDK-Specification-v1-RFC2119.md` §7) MUST NOT be changed casually. This includes `SplitFactory`, `SplitClient`, `SplitManager`, `SplitView`, `SplitClientConfig`, and all their method signatures and return types.
 
 If a proposed change — including changes made to simplify e2e testing — requires altering the public API, stop and raise it explicitly with the user before proceeding. Testing convenience is never a sufficient reason to change the API contract.
 

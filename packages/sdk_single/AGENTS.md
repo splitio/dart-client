@@ -1,19 +1,19 @@
-# AGENTS.md — single-sdk package
+# AGENTS.md — sdk_single package
 
 ## Purpose
 
-**Public SDK entry point** — The package end users install (`split_sdk`). Re-exports the public API assembled by `sdk_internal` and exposes model types from `models`. This is the only package that should be imported by applications using the Split SDK.
+**Public SDK entry point** — The package end users install (`sdk_single`). Re-exports the public API assembled by `sdk_internal` and exposes model types from `models`. This is the only package that should be imported by applications using the Split SDK.
 
 ## Key Files
 
-- `lib/split_sdk.dart` — Main library file; re-exports public API and model types
+- `lib/sdk_single.dart` — Main library file; re-exports public API and model types
 - `lib/src/` — Public-facing wrappers (to be populated)
 - `pubspec.yaml` — Package definition; depends on `sdk_internal` and `models`
 - `README.md` — User-facing documentation
 
 ## Testing
 
-- **Run tests**: `cd packages/single-sdk && dart test`
+- **Run tests**: `cd packages/sdk_single && dart test`
 - **Test file pattern**: `*_test.dart` in `test/`
 - **Focus**: Integration-level tests; also fully covered by `packages/e2e`
 

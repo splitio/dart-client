@@ -1,4 +1,4 @@
-# melos_managed_dependency_overrides: auth,client,engine,http_client,local,models,observer,parsing,recorders,sdk_internal,split_sdk,storage,sync
+# melos_managed_dependency_overrides: auth,client,engine,http_client,local,models,observer,parsing,recorders,sdk_internal,storage,sync,events,logger,sdk_single
 dependency_overrides:
   auth:
     path: ../auth
@@ -6,10 +6,14 @@ dependency_overrides:
     path: ../client
   engine:
     path: ../engine
+  events:
+    path: ../events
   http_client:
     path: ../http_client
   local:
     path: ../local
+  logger:
+    path: ../logger
   models:
     path: ../models
   observer:
@@ -20,8 +24,8 @@ dependency_overrides:
     path: ../recorders
   sdk_internal:
     path: ../sdk_internal
-  split_sdk:
-    path: ../single-sdk
+  sdk_single:
+    path: ../sdk_single
   storage:
     path: ../storage
   sync:

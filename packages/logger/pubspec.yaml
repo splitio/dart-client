@@ -1,0 +1,13 @@
+name: logger
+description: Logging abstraction (Logger, LogLevel) over package:logging. Leaf utility used across the SDK.
+version: 0.0.1
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  logging: ^1.2.0
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^3.0.0

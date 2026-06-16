@@ -1,0 +1,16 @@
+name: events
+description: Readiness/lifecycle manager — topologically ordered, milestone-latched (EventsManager, SplitInternalEvent).
+version: 0.0.1
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  models:
+    path: ../models
+  observer:
+    path: ../observer
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^3.0.0

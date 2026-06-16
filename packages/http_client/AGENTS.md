@@ -19,7 +19,7 @@
 ## Dependencies
 
 - **Internal**: None
-- **External**: `http: ^1.1.0`, `fetch_client: ^1.1.1` (Web/Flutter-compatible HTTP via `fetch` API)
+- **External**: `http: ^1.1.0`, `fetch_client: ^1.1.1` (Web/Flutter-compatible HTTP via `fetch` API), `backoff: ^1.0.1` (exponential backoff math for the retry layer)
 - **Used by**: `sdk_internal` (injected into sync and auth at wiring time)
 
 ## Important Patterns

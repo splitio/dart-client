@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Internal DI root and wiring layer** — Assembles all SDK layers (engine, storage, sync, auth, client, recorders, etc.) into a working SDK instance. Not published to pub.dev (`publish_to: none`). Used exclusively by `single-sdk` (the public entry point). The "composition root" of the SDK.
+**Internal DI root and wiring layer** — Assembles all SDK layers (engine, storage, sync, auth, client, recorders, etc.) into a working SDK instance. Not published to pub.dev (`publish_to: none`). Used exclusively by `sdk_single` (the public entry point). The "composition root" of the SDK.
 
 ## Key Files
 
@@ -32,7 +32,7 @@ All internal packages (this is the wiring root):
 - **Composition root**: Only package that knows about all other packages
 - **Dependency injection**: Constructs and wires all components; no business logic
 - **Factory pattern**: `SplitFactory` creates configured SDK instances
-- **Not yet published**: `publish_to: none` during development — must be published alongside `single-sdk` before release (pub.dev requires version deps, not path deps)
+- **Not yet published**: `publish_to: none` during development — must be published alongside `sdk_single` before release (pub.dev requires version deps, not path deps)
 
 ## DOs
 
@@ -44,7 +44,7 @@ All internal packages (this is the wiring root):
 ## DON'Ts
 
 - Don't add business logic — delegate to the appropriate layer package
-- Don't export this package in `single-sdk` beyond what's needed for the public API
+- Don't export this package in `sdk_single` beyond what's needed for the public API
 - Don't encourage direct use — document it as an internal package in README.md
-- Before publishing `single-sdk`, remove `publish_to: none` and publish `sdk_internal` first (pub.dev requires all dependencies to be published with version constraints, not path deps)
+- Before publishing `sdk_single`, remove `publish_to: none` and publish `sdk_internal` first (pub.dev requires all dependencies to be published with version constraints, not path deps)
 - Don't create circular dependencies
