@@ -135,7 +135,7 @@ flowchart TD
 | `parsing` | DTO → parsed engine model | `RuleParser`/`SplitChangeProcessor` → `ParsedSplit` (+ inner `TargetingRule`) |
 | `engine` | **Pure** rule-match (no I/O) | `TargetingEngine`, engine `EvaluationResult`, `EvaluationContext`, `Matcher`, `MatcherRegistry`, `Bucketer` (murmur3) |
 | `events` | Readiness/lifecycle manager, topologically ordered, milestone-latched | `EventsManager`, `SplitInternalEvent` |
-| `observer` | Generic pub/sub primitive | `CompositeObserver`, `Observer`, `ObserverRegistry` |
+| `observer` | Generic pub/sub primitive (see §20) | `CompositeObserver`, `Observer`, `ObserverRegistry`, `ObservableEvent` |
 | `logger` | Logging abstraction | `Logger`, `LogLevel` |
 | `backoff` | Retry backoff math | `ExponentialBackoffCounter`, `FixedIntervalBackoffCounter` |
 | `auth` | Per-endpoint credential provisioning (Strategy); JWT cache/fetch for streaming | `AuthProvider` (port), `StaticKeyAuthProvider` (sdkKey), `JwtAuthProvider` (cached/deduped/on-demand), `Credential`/`JwtCredential{token, channels, pushEnabled, expiresAt, connDelaySeconds}` |
@@ -1539,6 +1539,76 @@ Source: `utils/Backoff.ts`, `sync/streaming/UpdateWorkers/constants.ts`.
 // POST /v1/keys/cs  (client-side MTK)
 { "keys": [ { "k": "matchingKey", "fs": ["feature1", "feature2"] } ] }   // fs = feature names seen for this key
 ```
+
+---
+
+## 20. Observer & Internal Event Bus
+
+The `observer` module (§3.1) is a foundational, dependency-free pub/sub primitive that decouples
+internal event **emitters** (factory, sync, streaming, HTTP, auth, persistence, recorders) from
+**consumers** (event-driven logging, readiness/lifecycle bridging, persistence callbacks). It MUST
+hold no SDK state beyond its observer registry and MUST NOT perform I/O.
+
+### 20.1 Contract
+
+| Type | Shape | Responsibility |
+|------|-------|----------------|
+| `Observer` | single method `notifyEvent(ObservableEvent event)` | consumer entry point (functional interface) |
+| `ObserverRegistry` | `register(observer)`, `unregister(observer)`, `unregisterAll()` | registration lifecycle |
+| `CompositeObserver` | `Observer` + `ObserverRegistry` | fan-out dispatch to all registered observers |
+| `ObservableEvent` | value object (see §20.2) | the dispatched event |
+
+A `CompositeObserver` MUST be both an `Observer` (so it can be passed wherever an emitter expects a
+single sink) and an `ObserverRegistry` (so consumers can subscribe). Emitters MUST depend only on
+the `Observer` abstraction; they MUST NOT know their consumers.
+
+### 20.2 `ObservableEvent` model
+
+```
+ObservableEvent {
+  type      : String            // event-type identifier (see §20.4)
+  properties: Map<String,String> // default empty; interpolation/scoping data
+  payload   : Object?           // optional, type-specific (e.g. parsed update)
+  timestamp : int               // default = creation time (epoch millis)
+}
+```
+
+`ObservableEvent` MUST be an immutable value object. `properties` MUST default to empty and
+`timestamp` SHOULD default to the construction time. `payload` is OPTIONAL and carries
+type-specific data that string `properties` cannot represent.
+
+### 20.3 Default composite dispatch contract
+
+The default `CompositeObserver` implementation MUST satisfy:
+
+1. **Thread safety** — concurrent `register` / `unregister` / `notifyEvent` MUST be safe.
+2. **Snapshot dispatch** — `notifyEvent` MUST iterate over a snapshot of the registered observers
+   taken under synchronization, so registration changes during dispatch MUST NOT cause
+   concurrent-modification errors.
+3. **Fault isolation** — an exception thrown by one observer MUST NOT prevent the remaining
+   observers from receiving the event, and MUST NOT propagate back to the emitter.
+4. **Direct (synchronous) dispatch** — `notifyEvent` SHOULD dispatch synchronously on the caller's
+   execution context; observers are responsible for their own threading/offloading.
+
+### 20.4 Event-type identifiers (deferred)
+
+Concrete event-type string constants and their semantics are **non-normative / deferred** in v1.
+The reference Android thin client enumerates them in an `ObservableEventType` catalog (lifecycle,
+auth, HTTP, eval-sync, track, streaming, persistence, app-lifecycle). A future revision MAY
+promote a canonical taxonomy to this spec; v1 implementations MAY define their own constants.
+
+### 20.5 Integration notes (informative)
+
+These illustrate canonical consumer wiring and are non-normative:
+
+- **Event-driven logging** — a logger observer MAY subscribe and map event types to log
+  levels/messages (the reference SDK's `LoggerObserver`). The level/message mapping is out of
+  scope here.
+- **Readiness/lifecycle bridge** — the `EventsManager` (§3.1 `events`) MUST NOT subscribe to the
+  bus directly; instead an `EventsManagerObserver` adapter SHOULD wrap it as the `Observer`. This
+  adapter maps selected internal `ObservableEvent` types onto the `EventsManager`'s own events API
+  (emitting the `SplitEvent`s of §4.6), keeping the `EventsManager` decoupled from the observer
+  module. Such a bridge MAY scope key-specific events by a `matchingKey` property.
 
 Real payloads lifted from the reference SDKs' test fixtures. These are the **known-answer
 vectors** the Dart parsers/decoders MUST satisfy. Each block cites its source. Field shapes are
