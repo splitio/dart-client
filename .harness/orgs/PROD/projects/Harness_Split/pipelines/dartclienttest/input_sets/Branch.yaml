@@ -1,0 +1,14 @@
+inputSet:
+  name: Branch
+  identifier: Branch
+  orgIdentifier: PROD
+  projectIdentifier: Harness_Split
+  pipeline:
+    identifier: dartclienttest
+    properties:
+      ci:
+        codebase:
+          build:
+            type: branch
+            spec:
+              branch: <+trigger.branch>
