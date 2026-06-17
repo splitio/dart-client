@@ -6,9 +6,11 @@
 
 ## Key Files
 
-- `lib/observer.dart` — Library export
-- `lib/src/event_producer.dart` — Publisher/emitter interface (to be created)
-- `lib/src/event_consumer.dart` — Subscriber/listener interface (to be created)
+- `lib/observer.dart` — Barrel export (all four public types)
+- `lib/src/observable_event.dart` — Immutable value object (type, properties, payload, timestamp)
+- `lib/src/observer.dart` — `Observer` abstract interface (`notifyEvent`)
+- `lib/src/observer_registry.dart` — `ObserverRegistry` abstract interface (register/unregister/unregisterAll)
+- `lib/src/composite_observer.dart` — `CompositeObserver` — implements both interfaces; snapshot dispatch + fault isolation
 - `pubspec.yaml` — Zero dependencies (truly standalone)
 
 ## Testing
@@ -26,16 +28,17 @@
 ## Important Patterns
 
 - **Zero dependencies**: Can be used by any package without introducing cycles
-- **Typed events**: Use generic types or an event enum for type-safe pub/sub
-- **Synchronous delivery**: Events delivered synchronously in Dart's event loop
-- **Unsubscribe support**: Listeners must be removable to avoid memory leaks
+- **Emitters depend only on `Observer`**: Pass `CompositeObserver` as the `Observer` sink; emitters never see the registry
+- **Snapshot dispatch**: `CompositeObserver.notifyEvent` iterates a copy of the observer list — safe against register/unregister during dispatch
+- **Fault isolation**: An exception in one observer is swallowed; remaining observers still receive the event
+- **Idempotent registration**: Registering the same observer instance twice is a no-op
+- **Payload immutability**: `ObservableEvent.payload` must be an immutable value — mutating it from within an observer corrupts dispatch for subsequent observers
 
 ## DOs
 
 - Keep this package completely dependency-free
-- Support typed events so consumers don't need to cast
-- Implement listener cleanup (return a subscription object or cancel function)
-- Test for listener isolation (one failing listener shouldn't affect others)
+- Use `CompositeObserver` as the concrete implementation in all wiring
+- Pass only immutable objects as `ObservableEvent.payload`
 
 ## DON'Ts
 

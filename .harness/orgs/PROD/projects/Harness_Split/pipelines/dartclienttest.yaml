@@ -30,8 +30,8 @@ pipeline:
             steps:
               - step:
                   type: Run
-                  name: Install Dependencies
-                  identifier: install_dependencies
+                  name: Build Analyze Test and Coverage
+                  identifier: build_analyze_test_coverage
                   spec:
                     connectorRef: dockerhub
                     image: dart:stable
@@ -40,47 +40,9 @@ pipeline:
                       set -eu
                       dart pub get
                       dart run melos bootstrap
-              - step:
-                  type: Run
-                  name: Analyze
-                  identifier: analyze
-                  spec:
-                    connectorRef: dockerhub
-                    image: dart:stable
-                    shell: Sh
-                    command: |
-                      set -eu
-                      dart pub get
                       dart run melos run analyze
-              - step:
-                  type: Run
-                  name: Run Tests
-                  identifier: run_tests
-                  spec:
-                    connectorRef: dockerhub
-                    image: dart:stable
-                    shell: Sh
-                    command: |
-                      set -eu
-                      dart pub get
                       dart run melos run test
-              - step:
-                  type: Run
-                  name: Generate Coverage Report
-                  identifier: generate_coverage_report
-                  spec:
-                    connectorRef: dockerhub
-                    image: dart:stable
-                    shell: Sh
-                    command: |
-                      set -eu
-                      dart pub get
                       dart run melos run collect-coverage
-
-                      echo "Coverage report:"
-                      ls -la coverage/lcov.info || true
-                  when:
-                    stageStatus: Success
               - step:
                   type: Run
                   name: Install and Run SonarQube Scanner
@@ -96,30 +58,22 @@ pipeline:
                         cd "/harness/<+codebase.repoName>"
                       fi
 
-                      COMMON_ARGS="
-                        -Dsonar.host.url=https://sonar.harness.io
-                        -Dsonar.projectKey=dart-client
-                        -Dsonar.token=$SONAR_TOKEN
-                        -Dsonar.scanner.skipSystemTruststore=true
-                        -Dsonar.sources=packages
-                        -Dsonar.tests=packages
-                        -Dsonar.test.inclusions=packages/**/test/**/*_test.dart
-                        -Dsonar.exclusions=**/build/**,packages/e2e/**
-                        -Dsonar.coverage.exclusions=**/*_test.dart
-                        -Dsonar.dart.lcov.reportPaths=coverage/lcov.info
-                      "
+                      echo "PWD: $(pwd)"
+                      echo "Coverage file:"
+                      ls -la coverage/lcov.info || echo "NOT FOUND"
+                      wc -l coverage/lcov.info || true
+
+                      SONAR_COMMON="-Dsonar.host.url=https://sonar.harness.io -Dsonar.token=$SONAR_TOKEN -Dsonar.scanner.skipSystemTruststore=true"
 
                       if [ "<+codebase.prNumber>" != "" ] && [ "<+codebase.prNumber>" != "null" ]; then
                         echo "Pull Request Analysis"
-                        sonar-scanner \
-                          $COMMON_ARGS \
+                        sonar-scanner $SONAR_COMMON \
                           -Dsonar.pullrequest.key=<+codebase.prNumber> \
                           -Dsonar.pullrequest.branch=<+codebase.sourceBranch> \
                           -Dsonar.pullrequest.base=<+codebase.targetBranch>
                       else
                         echo "Branch Analysis"
-                        sonar-scanner \
-                          $COMMON_ARGS \
+                        sonar-scanner $SONAR_COMMON \
                           -Dsonar.branch.name=<+codebase.branch>
                       fi
                     envVariables:

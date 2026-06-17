@@ -6,42 +6,6 @@ environment:
   sdk: '>=3.0.0 <4.0.0'
 
 dev_dependencies:
-  melos: ^7.0.0
+  melos: ^6.0.0
   test: ^1.24.0
   lints: ^3.0.0
-
-melos:
-  name: split-dart-sdk
-  repository: https://github.com/Harness_Split/dart-client
-
-  packages:
-    - packages/**
-
-  scripts:
-    test:
-      run: dart run melos exec --concurrency=4 -- dart test
-      description: Run all package tests
-
-    analyze:
-      run: dart run melos exec -- dart analyze
-      description: Analyze all packages
-
-    format:
-      run: dart run melos exec -- dart format .
-      description: Format all packages
-
-    collect-coverage:
-      run: |
-        find packages -name "*.dart" -path "*/lib/*.dart" -not -path "*/lib/src/*" -not -path "*/e2e/*" | while read f; do
-          grep -q "^export " "$f" && sed -i.bak '/^\/\/ coverage:ignore-file$/d' "$f" && rm -f "${f}.bak"
-        done
-        dart run melos exec --ignore=e2e -- dart test --coverage=coverage
-        dart run melos exec --ignore=e2e -- dart run coverage:format_coverage --package=. --lcov --check-ignore --report-on=lib '--ignore-files=**.pub-cache**' '--ignore-files=**test**' -i coverage/test -o coverage/lcov.info
-        mkdir -p coverage
-        find packages -name lcov.info -not -path "*/e2e/*" | xargs cat > coverage/lcov.info
-        awk '/^DA:/{split($0,a,","); if(a[2]+0>0) hit++; total++} END{if(total==0){print "Coverage: N/A (no instrumented lines)"; exit 0} pct=hit/total*100; printf "Coverage: %.2f%%\n", pct; if(pct < 80) {print "FAIL: below 80% threshold"; exit 1}}' coverage/lcov.info
-      description: Run tests with coverage, merge results, and enforce 80% threshold
-
-    publish:
-      run: dart run melos publish
-      description: Publish packages to pub.dev

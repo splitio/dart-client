@@ -12,7 +12,7 @@ Target platforms: **All Dart targets** — Dart VM, Flutter (Android, iOS, Web, 
 ## Build System
 
 - **Build tool**: Melos (Dart workspaces)
-- **Root pubspec**: `pubspec.yaml` (dev-only, defines dev_dependencies)
+- **Root pubspec**: `pubspec.yaml` (dev-only, defines dev_dependencies and Melos workspace config under `melos:` key)
 - **Build all packages**: `dart pub get` (in each package) — no `melos build` script exists
 - **Build specific package**: `cd packages/[package-name] && dart pub get`
 - **Clean all**: `melos clean`
@@ -86,8 +86,7 @@ Target platforms: **All Dart targets** — Dart VM, Flutter (Android, iOS, Web, 
 
 ```
 dart-client/
-├── pubspec.yaml              # Root workspace definition (Melos)
-├── melos.yaml                # Melos configuration
+├── pubspec.yaml              # Root workspace definition (Melos config under `melos:` key)
 ├── AGENTS.md                 # This file
 ├── packages/                 # All Dart packages (monorepo structure)
 │   ├── models/               # Data models and types
