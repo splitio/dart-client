@@ -1,32 +1,3 @@
-# melos_managed_dependency_overrides: auth,client,engine,http_client,local,models,observer,parsing,recorders,sdk_internal,storage,sync,events,logger,sdk_single
+# melos_managed_dependency_overrides: splitio_client_side,splitio_commons
 dependency_overrides:
-  auth:
-    path: ../auth
-  client:
-    path: ../client
-  engine:
-    path: ../engine
-  events:
-    path: ../events
-  http_client:
-    path: ../http_client
-  local:
-    path: ../local
-  logger:
-    path: ../logger
-  models:
-    path: ../models
-  observer:
-    path: ../observer
-  parsing:
-    path: ../parsing
-  recorders:
-    path: ../recorders
-  sdk_internal:
-    path: ../sdk_internal
-  sdk_single:
-    path: ../sdk_single
-  storage:
-    path: ../storage
-  sync:
-    path: ../sync
+  {splitio_client_side: {path: ../splitio_client_side}, splitio_commons: {path: ../splitio_commons}}

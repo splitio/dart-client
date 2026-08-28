@@ -15,3 +15,9 @@ pubspec.lock
 
 # OS
 .DS_Store
+
+# Custom
+examples/bin/local.dart
+docs/audits
+docs/reviews
+docs/superpowers

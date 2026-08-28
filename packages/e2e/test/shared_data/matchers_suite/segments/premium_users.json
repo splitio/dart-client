@@ -1,0 +1,7 @@
+{
+  "name": "premium_users",
+  "added": ["user_c", "user_premium_1", "user_premium_2"],
+  "removed": [],
+  "since": -1,
+  "till": 500
+}

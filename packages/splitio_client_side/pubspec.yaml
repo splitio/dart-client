@@ -1,0 +1,14 @@
+name: splitio_client_side
+description: Official Dart SDK for Split, the platform for controlled rollouts, which serves features to your users via feature flags to manage your complete customer experience.
+version: 1.0.0
+homepage: https://split.io
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  splitio_commons: ^1.0.0
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^3.0.0

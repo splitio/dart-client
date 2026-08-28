@@ -1,0 +1,11 @@
+name: examples
+description: Example usage of the Split Dart SDK against real servers.
+publish_to: none
+version: 0.0.1
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  splitio_client_side:
+    path: ../packages/splitio_client_side

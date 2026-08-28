@@ -1,0 +1,4 @@
+# melos_managed_dependency_overrides: splitio_commons
+# dependency_overrides:
+#   splitio_commons:
+#     path: ../splitio_commons

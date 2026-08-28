@@ -88,46 +88,55 @@ Target platforms: **All Dart targets** — Dart VM, Flutter (Android, iOS, Web, 
 dart-client/
 ├── pubspec.yaml              # Root workspace definition (Melos config under `melos:` key)
 ├── AGENTS.md                 # This file
-├── packages/                 # All Dart packages (monorepo structure)
-│   ├── models/               # Data models and types
-│   ├── auth/                 # Authentication and authorization
-│   ├── storage/              # Local storage and persistence
-│   ├── http_client/          # HTTP client implementation
-│   ├── client/               # Internal per-key SplitClient/ClientManager building block
-│   ├── engine/               # Core execution engine
-│   ├── sync/                 # Synchronization logic
-│   ├── parsing/              # Data parsing utilities
-│   ├── recorders/            # Event recording and metrics
-│   ├── observer/             # Observability (logging, tracing)
-│   ├── logger/               # Logging abstraction over package:logging
-│   ├── events/               # Readiness/lifecycle manager (latched events)
-│   ├── sdk_internal/         # Internal DI/wiring root; assembles all layers (not published directly)
-│   ├── local/                # Local data handling
-│   ├── sdk_single/           # Public SDK entry point (the package users install)
+├── packages/
+│   ├── splitio_commons/      # Shared Split SDK components — domain types, engine, sync, auth, all shared logic
+│   │   └── lib/src/
+│   │       ├── auth/         # Authentication and authorization
+│   │       ├── core/         # Shared utilities (coercion, semver, EvaluationContext, MatchingContext)
+│   │       ├── engine/       # Targeting engine, bucketing, matcher orchestration
+│   │       ├── event_tracker/# Event tracking
+│   │       ├── events/       # Readiness/lifecycle manager (latched events)
+│   │       ├── http_client/  # HTTP client implementation
+│   │       ├── impressions/  # Impression recording with strategy pattern (debug, optimized, none)
+│   │       ├── local/        # Local data handling
+│   │       ├── logger/       # Logging abstraction over package:logging
+│   │       ├── models/       # Data models, types, and polymorphic matchers
+│   │       ├── observer/     # Observability (logging, tracing)
+│   │       ├── parsing/      # Data parsing utilities
+│   │       ├── storage/      # Local storage and persistence
+│   │       └── sync/         # Synchronization: polling + streaming (SSE) with pure FSM + effect runtime
+│   ├── splitio_client_side/  # Public SDK entry point (CS flavor): single-tenant, streaming sync, per-key SplitClient
+│   │   └── lib/src/
+│   │       ├── client/       # Internal per-key SplitClient/ClientManager building block
+│   │       └── internal/     # Internal DI/wiring root; assembles all layers
 │   └── e2e/                  # End-to-end integration tests
 ├── test/                     # Root-level tests (if any)
 └── docs/                     # Documentation
 ```
 
+The monorepo consolidates shared logic into two library packages (`splitio_commons`, `splitio_client_side`) plus `e2e` — not one package per concern. Sub-concerns live as directories under `lib/src/` within these packages.
+
 ## Important Packages/Folders
 
 Based on recent activity and architecture:
 
-| Package | Purpose | Priority |
+| Package/Folder | Purpose | Priority |
 |---------|---------|----------|
-| `packages/sdk_single` | Public SDK entry point; the package users install | High |
-| `packages/sdk_internal` | Internal DI/wiring root; assembles all layers | High |
-| `packages/client` | Internal per-key SplitClient/ClientManager building block | High |
-| `packages/auth` | Authentication logic; security-critical | High |
-| `packages/models` | Shared data types across SDK | High |
-| `packages/engine` | Core execution logic; complex algorithms | High |
-| `packages/http_client` | HTTP communication layer | Medium |
-| `packages/storage` | Persistence layer | Medium |
-| `packages/observer` | Observability and logging | Medium |
-| `packages/sync` | Data synchronization | Medium |
+| `packages/splitio_client_side` | Public SDK entry point (client-side flavor); the package users install | High |
+| `packages/splitio_client_side/lib/src/internal` | Internal DI/wiring root; assembles all layers | High |
+| `packages/splitio_client_side/lib/src/client` | Internal per-key SplitClient/ClientManager building block | High |
+| `packages/splitio_commons/lib/src/auth` | Authentication logic; security-critical | High |
+| `packages/splitio_commons/lib/src/core` | Shared utilities: coercion, semver, EvaluationContext, MatchingContext | High |
+| `packages/splitio_commons/lib/src/models` | Data types and polymorphic matchers (each matcher in its own file with `match()`) | High |
+| `packages/splitio_commons/lib/src/engine` | Targeting engine, bucketing, matcher orchestration (delegates to matchers) | High |
+| `packages/splitio_commons/lib/src/http_client` | HTTP communication layer | Medium |
+| `packages/splitio_commons/lib/src/storage` | Persistence layer | Medium |
+| `packages/splitio_commons/lib/src/observer` | Observability and logging | Medium |
+| `packages/splitio_commons/lib/src/sync` | Data synchronization: polling + streaming (SSE push, §11-§12) with streaming↔polling fallback | Medium |
 | `packages/e2e` | Integration tests | Medium |
-| `packages/parsing` | Data parsing utilities | Low |
-| `packages/recorders` | Metrics collection | Low |
+| `packages/splitio_commons/lib/src/parsing` | Data parsing utilities | Low |
+| `packages/splitio_commons/lib/src/impressions` | Impression recording with strategy pattern (debug, optimized, none) | Medium |
+| `packages/splitio_commons/lib/src/event_tracker` | Event tracking | Medium |
 
 ## Monorepo Commands (Melos)
 
@@ -237,6 +246,30 @@ Acceptable reasons to change the public API:
 - The spec explicitly requires it
 - A confirmed bug in the spec or API design, agreed with the user
 - A deliberate, user-approved design revision
+
+## Class Size Limits
+
+To preserve readability and the Single Responsibility Principle (SRP), classes are subject to a line-of-count (LOC) budget. **LOC is measured as the physical span of the class body** — from the class/mixin declaration line through its closing brace, inclusive, counting comments and blank lines (i.e. the whole declaration as it appears in the file). Generated files (`*.g.dart`) are exempt.
+
+- A class **MUST NOT** exceed **200 LOC** (hard limit). A change that pushes a class over 200 LOC MUST NOT be merged; split the class first.
+- A class **SHOULD NOT** exceed **150 LOC** (soft warning). Crossing 150 is a signal to reconsider the class's responsibilities during review — not a merge blocker.
+- LOC is a smell detector, not the whole judgment. A class that is long **because it is genuinely one cohesive responsibility with low branching** (e.g. a pure FSM reducer, a DI composition root, a flat DTO-to-domain mapper) MAY exceed the limit **only** with an explicit, documented exemption (see below). When in doubt, prefer splitting.
+
+**When a class approaches or exceeds the limit**, apply — in rough order of preference:
+1. **Extract Class** — split method clusters that touch disjoint field subsets into their own classes.
+2. **Extract Collaborator behind an SPI** — move I/O-bound or platform-specific behavior behind an injected interface (matches this repo's `HttpClient` / `StreamingTransport` seam pattern).
+3. **Strategy / polymorphism** — replace large conditional blocks with strategy objects (see `packages/impressions`).
+4. **Extract Method into a helper class** — pull a cohesive family of private helpers (e.g. a parser's per-type cases) into a dedicated collaborator, one class per file.
+
+All splits MUST follow the **Tidy First** rule in Development Flow: structural extraction is a separate commit from any behavior change, with tests green before and after.
+
+**Exemptions.** A class that legitimately exceeds 200 LOC MUST carry a single-line comment immediately above its declaration in the form:
+
+```dart
+// LOC-exemption: <one-line reason>. Approved <YYYY-MM-DD>.
+```
+
+Exemptions MUST be approved by the user (not self-granted by an agent) and are only appropriate for genuinely cohesive, low-complexity classes. The current approved exemptions are `StreamingPolicy` (pure FSM reducer) and `DependencyContainer` (DI composition root).
 
 ## Spec Compliance & Sync
 

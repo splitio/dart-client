@@ -1,0 +1,188 @@
+[
+  {
+    "test": "traffic allocation - user inside 50% gets treatment",
+    "method": "getTreatment",
+    "key": "alice",
+    "bucketingKey": null,
+    "flagName": "flag_traffic_allocation_50",
+    "attributes": {},
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "alice",
+      "t": "on",
+      "m": 0,
+      "c": 3001,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "traffic allocation - user outside 50% gets defaultTreatment",
+    "method": "getTreatment",
+    "key": "user_0",
+    "bucketingKey": null,
+    "flagName": "flag_traffic_allocation_50",
+    "attributes": {},
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "user_0",
+      "t": "off",
+      "m": 0,
+      "c": 3001,
+      "r": "not in split"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "prerequisite met - parent returns on, child evaluates normally",
+    "method": "getTreatment",
+    "key": "any_user",
+    "bucketingKey": null,
+    "flagName": "flag_with_prerequisite",
+    "attributes": {
+      "plan": "enterprise"
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "any_user",
+      "t": "on",
+      "m": 0,
+      "c": 3003,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "prerequisite not met - parent returns off, child returns defaultTreatment",
+    "method": "getTreatment",
+    "key": "any_user",
+    "bucketingKey": null,
+    "flagName": "flag_with_prerequisite",
+    "attributes": {
+      "plan": "free"
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "any_user",
+      "t": "off",
+      "m": 0,
+      "c": 3003,
+      "r": "prerequisites not met"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "bucketingKey changes bucket assignment - alice buckets to on",
+    "method": "getTreatment",
+    "key": "bob",
+    "bucketingKey": "alice",
+    "flagName": "flag_bucketing_key_split",
+    "attributes": {},
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "bob",
+      "t": "on",
+      "m": 0,
+      "c": 3004,
+      "r": "default rule",
+      "b": "alice"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "bucketingKey changes bucket assignment - bob naturally gets off",
+    "method": "getTreatment",
+    "key": "bob",
+    "bucketingKey": null,
+    "flagName": "flag_bucketing_key_split",
+    "attributes": {},
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "bob",
+      "t": "off",
+      "m": 0,
+      "c": 3004,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "archived flag returns control (not visible)",
+    "method": "getTreatment",
+    "key": "any_user",
+    "bucketingKey": null,
+    "flagName": "flag_archived",
+    "attributes": {},
+    "expectedTreatment": "control",
+    "expectedImpression": null,
+    "expectedConfig": null
+  },
+  {
+    "test": "three-way split - alice (bucket 11) gets on",
+    "method": "getTreatment",
+    "key": "alice",
+    "bucketingKey": null,
+    "flagName": "flag_three_way_split",
+    "attributes": {},
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "alice",
+      "t": "on",
+      "m": 0,
+      "c": 3006,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "three-way split - bob (bucket 86) gets beta",
+    "method": "getTreatment",
+    "key": "bob",
+    "bucketingKey": null,
+    "flagName": "flag_three_way_split",
+    "attributes": {},
+    "expectedTreatment": "beta",
+    "expectedImpression": {
+      "k": "bob",
+      "t": "beta",
+      "m": 0,
+      "c": 3006,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "three-way split with config - alice gets on with stable config",
+    "method": "getTreatmentWithConfig",
+    "key": "alice",
+    "bucketingKey": null,
+    "flagName": "flag_three_way_split",
+    "attributes": {},
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "alice",
+      "t": "on",
+      "m": 0,
+      "c": 3006,
+      "r": "default rule"
+    },
+    "expectedConfig": "{\"tier\":\"stable\"}"
+  },
+  {
+    "test": "three-way split with config - bob gets beta with experimental config",
+    "method": "getTreatmentWithConfig",
+    "key": "bob",
+    "bucketingKey": null,
+    "flagName": "flag_three_way_split",
+    "attributes": {},
+    "expectedTreatment": "beta",
+    "expectedImpression": {
+      "k": "bob",
+      "t": "beta",
+      "m": 0,
+      "c": 3006,
+      "r": "default rule"
+    },
+    "expectedConfig": "{\"tier\":\"experimental\"}"
+  }
+]

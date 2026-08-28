@@ -1,0 +1,7 @@
+{
+  "name": "beta_users",
+  "added": ["user_c", "user_d"],
+  "removed": [],
+  "since": -1,
+  "till": 500
+}

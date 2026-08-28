@@ -1,0 +1,18 @@
+name: splitio_commons
+description: Shared components of the official Dart SDK for Split, the platform for controlled rollouts, which serves features to your users via feature flags to manage your complete customer experience.
+version: 1.0.0
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  http: ^1.1.0
+  fetch_client: ^1.1.1
+  backoff: ^1.0.1
+  logging: ^1.2.0
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^3.0.0
+  build_runner: ^2.4.0
+  json_serializable: ^6.7.0

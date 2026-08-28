@@ -1,0 +1,1130 @@
+[
+  {
+    "test": "EQUAL_TO number - matches",
+    "method": "getTreatment",
+    "key": "test_user_1",
+    "bucketingKey": null,
+    "flagName": "flag_equal_to_number",
+    "attributes": {
+      "age": 25
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_1",
+      "t": "on",
+      "m": 0,
+      "c": 1001,
+      "r": "age equals 25"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "EQUAL_TO number - does not match",
+    "method": "getTreatment",
+    "key": "test_user_2",
+    "bucketingKey": null,
+    "flagName": "flag_equal_to_number",
+    "attributes": {
+      "age": 30
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_2",
+      "t": "off",
+      "m": 0,
+      "c": 1001,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "EQUAL_TO datetime - matches",
+    "method": "getTreatment",
+    "key": "test_user_3",
+    "bucketingKey": null,
+    "flagName": "flag_equal_to_datetime",
+    "attributes": {
+      "signup_date": 1704067200000
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_3",
+      "t": "on",
+      "m": 0,
+      "c": 1002,
+      "r": "signup date equals 2024-01-01"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "EQUAL_TO datetime - does not match",
+    "method": "getTreatment",
+    "key": "test_user_4",
+    "bucketingKey": null,
+    "flagName": "flag_equal_to_datetime",
+    "attributes": {
+      "signup_date": 1704153600000
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_4",
+      "t": "off",
+      "m": 0,
+      "c": 1002,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "GREATER_THAN_OR_EQUAL_TO - matches",
+    "method": "getTreatment",
+    "key": "test_user_5",
+    "bucketingKey": null,
+    "flagName": "flag_greater_than_or_equal_to",
+    "attributes": {
+      "age": 25
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_5",
+      "t": "on",
+      "m": 0,
+      "c": 1003,
+      "r": "age >= 18"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "GREATER_THAN_OR_EQUAL_TO - does not match",
+    "method": "getTreatment",
+    "key": "test_user_6",
+    "bucketingKey": null,
+    "flagName": "flag_greater_than_or_equal_to",
+    "attributes": {
+      "age": 15
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_6",
+      "t": "off",
+      "m": 0,
+      "c": 1003,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "LESS_THAN_OR_EQUAL_TO - matches",
+    "method": "getTreatment",
+    "key": "test_user_7",
+    "bucketingKey": null,
+    "flagName": "flag_less_than_or_equal_to",
+    "attributes": {
+      "age": 50
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_7",
+      "t": "on",
+      "m": 0,
+      "c": 1004,
+      "r": "age <= 65"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "LESS_THAN_OR_EQUAL_TO - does not match",
+    "method": "getTreatment",
+    "key": "test_user_8",
+    "bucketingKey": null,
+    "flagName": "flag_less_than_or_equal_to",
+    "attributes": {
+      "age": 70
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_8",
+      "t": "off",
+      "m": 0,
+      "c": 1004,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "BETWEEN number - matches",
+    "method": "getTreatment",
+    "key": "test_user_9",
+    "bucketingKey": null,
+    "flagName": "flag_between_number",
+    "attributes": {
+      "age": 30
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_9",
+      "t": "on",
+      "m": 0,
+      "c": 1005,
+      "r": "age between 18 and 65"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "BETWEEN number - does not match",
+    "method": "getTreatment",
+    "key": "test_user_10",
+    "bucketingKey": null,
+    "flagName": "flag_between_number",
+    "attributes": {
+      "age": 70
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_10",
+      "t": "off",
+      "m": 0,
+      "c": 1005,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "BETWEEN datetime - matches",
+    "method": "getTreatment",
+    "key": "test_user_11",
+    "bucketingKey": null,
+    "flagName": "flag_between_datetime",
+    "attributes": {
+      "login_time": 1704114000000
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_11",
+      "t": "on",
+      "m": 0,
+      "c": 1006,
+      "r": "login time between 12:00 and 14:00 UTC on 2024-01-01"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "BETWEEN datetime - does not match",
+    "method": "getTreatment",
+    "key": "test_user_12",
+    "bucketingKey": null,
+    "flagName": "flag_between_datetime",
+    "attributes": {
+      "login_time": 1704121200000
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_12",
+      "t": "off",
+      "m": 0,
+      "c": 1006,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "EQUAL_TO_SET - matches",
+    "method": "getTreatment",
+    "key": "test_user_13",
+    "bucketingKey": null,
+    "flagName": "flag_equal_to_set",
+    "attributes": {
+      "permissions": [
+        "read",
+        "write"
+      ]
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_13",
+      "t": "on",
+      "m": 0,
+      "c": 1007,
+      "r": "permissions equal to {read, write}"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "EQUAL_TO_SET - does not match (extra element)",
+    "method": "getTreatment",
+    "key": "test_user_14",
+    "bucketingKey": null,
+    "flagName": "flag_equal_to_set",
+    "attributes": {
+      "permissions": [
+        "read",
+        "write",
+        "admin"
+      ]
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_14",
+      "t": "off",
+      "m": 0,
+      "c": 1007,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "CONTAINS_ANY_OF_SET - matches",
+    "method": "getTreatment",
+    "key": "test_user_15",
+    "bucketingKey": null,
+    "flagName": "flag_contains_any_of_set",
+    "attributes": {
+      "tags": [
+        "vip",
+        "new"
+      ]
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_15",
+      "t": "on",
+      "m": 0,
+      "c": 1008,
+      "r": "tags contain any of {vip, beta}"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "CONTAINS_ANY_OF_SET - does not match",
+    "method": "getTreatment",
+    "key": "test_user_16",
+    "bucketingKey": null,
+    "flagName": "flag_contains_any_of_set",
+    "attributes": {
+      "tags": [
+        "regular",
+        "old"
+      ]
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_16",
+      "t": "off",
+      "m": 0,
+      "c": 1008,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "CONTAINS_ALL_OF_SET - matches",
+    "method": "getTreatment",
+    "key": "test_user_17",
+    "bucketingKey": null,
+    "flagName": "flag_contains_all_of_set",
+    "attributes": {
+      "tags": [
+        "admin",
+        "active",
+        "other"
+      ]
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_17",
+      "t": "on",
+      "m": 0,
+      "c": 1009,
+      "r": "tags contain all of {admin, active}"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "CONTAINS_ALL_OF_SET - does not match (missing element)",
+    "method": "getTreatment",
+    "key": "test_user_18",
+    "bucketingKey": null,
+    "flagName": "flag_contains_all_of_set",
+    "attributes": {
+      "tags": [
+        "admin"
+      ]
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_18",
+      "t": "off",
+      "m": 0,
+      "c": 1009,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "PART_OF_SET - matches",
+    "method": "getTreatment",
+    "key": "test_user_19",
+    "bucketingKey": null,
+    "flagName": "flag_part_of_set",
+    "attributes": {
+      "roles": [
+        "editor",
+        "viewer"
+      ]
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_19",
+      "t": "on",
+      "m": 0,
+      "c": 1010,
+      "r": "roles part of {admin, editor, viewer}"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "PART_OF_SET - does not match (element not in set)",
+    "method": "getTreatment",
+    "key": "test_user_20",
+    "bucketingKey": null,
+    "flagName": "flag_part_of_set",
+    "attributes": {
+      "roles": [
+        "editor",
+        "superadmin"
+      ]
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_20",
+      "t": "off",
+      "m": 0,
+      "c": 1010,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "STARTS_WITH - matches",
+    "method": "getTreatment",
+    "key": "test_user_21",
+    "bucketingKey": null,
+    "flagName": "flag_starts_with",
+    "attributes": {
+      "email": "admin@example.com"
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_21",
+      "t": "on",
+      "m": 0,
+      "c": 1011,
+      "r": "email starts with admin@ or support@"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "STARTS_WITH - does not match",
+    "method": "getTreatment",
+    "key": "test_user_22",
+    "bucketingKey": null,
+    "flagName": "flag_starts_with",
+    "attributes": {
+      "email": "user@example.com"
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_22",
+      "t": "off",
+      "m": 0,
+      "c": 1011,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "ENDS_WITH - matches",
+    "method": "getTreatment",
+    "key": "test_user_23",
+    "bucketingKey": null,
+    "flagName": "flag_ends_with",
+    "attributes": {
+      "email": "john@company.com"
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_23",
+      "t": "on",
+      "m": 0,
+      "c": 1012,
+      "r": "email ends with @company.com or @internal.io"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "ENDS_WITH - does not match",
+    "method": "getTreatment",
+    "key": "test_user_24",
+    "bucketingKey": null,
+    "flagName": "flag_ends_with",
+    "attributes": {
+      "email": "john@external.com"
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_24",
+      "t": "off",
+      "m": 0,
+      "c": 1012,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "CONTAINS_STRING - matches",
+    "method": "getTreatment",
+    "key": "test_user_25",
+    "bucketingKey": null,
+    "flagName": "flag_contains_string",
+    "attributes": {
+      "name": "admin_user"
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_25",
+      "t": "on",
+      "m": 0,
+      "c": 1013,
+      "r": "name contains admin or root"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "CONTAINS_STRING - does not match",
+    "method": "getTreatment",
+    "key": "test_user_26",
+    "bucketingKey": null,
+    "flagName": "flag_contains_string",
+    "attributes": {
+      "name": "regular_user"
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_26",
+      "t": "off",
+      "m": 0,
+      "c": 1013,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "MATCHES_STRING - matches",
+    "method": "getTreatment",
+    "key": "test_user_27",
+    "bucketingKey": null,
+    "flagName": "flag_matches_string",
+    "attributes": {
+      "email": "john@test.com"
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_27",
+      "t": "on",
+      "m": 0,
+      "c": 1014,
+      "r": "email matches regex"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "MATCHES_STRING - does not match",
+    "method": "getTreatment",
+    "key": "test_user_28",
+    "bucketingKey": null,
+    "flagName": "flag_matches_string",
+    "attributes": {
+      "email": "John123@test.com"
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_28",
+      "t": "off",
+      "m": 0,
+      "c": 1014,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "EQUAL_TO_BOOLEAN - matches true",
+    "method": "getTreatment",
+    "key": "test_user_29",
+    "bucketingKey": null,
+    "flagName": "flag_equal_to_boolean",
+    "attributes": {
+      "is_premium": true
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_29",
+      "t": "on",
+      "m": 0,
+      "c": 1015,
+      "r": "is_premium equals true"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "EQUAL_TO_BOOLEAN - does not match",
+    "method": "getTreatment",
+    "key": "test_user_30",
+    "bucketingKey": null,
+    "flagName": "flag_equal_to_boolean",
+    "attributes": {
+      "is_premium": false
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_30",
+      "t": "off",
+      "m": 0,
+      "c": 1015,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "IN_SEGMENT - matches",
+    "method": "getTreatment",
+    "key": "user_c",
+    "bucketingKey": null,
+    "flagName": "flag_in_segment",
+    "attributes": {},
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "user_c",
+      "t": "on",
+      "m": 0,
+      "c": 1016,
+      "r": "in segment premium_users"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "IN_SEGMENT - does not match",
+    "method": "getTreatment",
+    "key": "user_regular",
+    "bucketingKey": null,
+    "flagName": "flag_in_segment",
+    "attributes": {},
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "user_regular",
+      "t": "off",
+      "m": 0,
+      "c": 1016,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "EQUAL_TO_SEMVER - matches",
+    "method": "getTreatment",
+    "key": "test_user_31",
+    "bucketingKey": null,
+    "flagName": "flag_equal_to_semver",
+    "attributes": {
+      "version": "2.0.0"
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_31",
+      "t": "on",
+      "m": 0,
+      "c": 1017,
+      "r": "version equals 2.0.0"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "EQUAL_TO_SEMVER - does not match",
+    "method": "getTreatment",
+    "key": "test_user_32",
+    "bucketingKey": null,
+    "flagName": "flag_equal_to_semver",
+    "attributes": {
+      "version": "2.0.1"
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_32",
+      "t": "off",
+      "m": 0,
+      "c": 1017,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "GREATER_THAN_OR_EQUAL_TO_SEMVER - matches",
+    "method": "getTreatment",
+    "key": "test_user_33",
+    "bucketingKey": null,
+    "flagName": "flag_greater_than_or_equal_to_semver",
+    "attributes": {
+      "version": "2.0.0"
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_33",
+      "t": "on",
+      "m": 0,
+      "c": 1018,
+      "r": "version >= 1.5.0"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "GREATER_THAN_OR_EQUAL_TO_SEMVER - does not match",
+    "method": "getTreatment",
+    "key": "test_user_34",
+    "bucketingKey": null,
+    "flagName": "flag_greater_than_or_equal_to_semver",
+    "attributes": {
+      "version": "1.0.0"
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_34",
+      "t": "off",
+      "m": 0,
+      "c": 1018,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "LESS_THAN_OR_EQUAL_TO_SEMVER - matches",
+    "method": "getTreatment",
+    "key": "test_user_35",
+    "bucketingKey": null,
+    "flagName": "flag_less_than_or_equal_to_semver",
+    "attributes": {
+      "version": "2.5.0"
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_35",
+      "t": "on",
+      "m": 0,
+      "c": 1019,
+      "r": "version <= 3.0.0"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "LESS_THAN_OR_EQUAL_TO_SEMVER - does not match",
+    "method": "getTreatment",
+    "key": "test_user_36",
+    "bucketingKey": null,
+    "flagName": "flag_less_than_or_equal_to_semver",
+    "attributes": {
+      "version": "3.5.0"
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_36",
+      "t": "off",
+      "m": 0,
+      "c": 1019,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "BETWEEN_SEMVER - matches",
+    "method": "getTreatment",
+    "key": "test_user_37",
+    "bucketingKey": null,
+    "flagName": "flag_between_semver",
+    "attributes": {
+      "version": "1.5.0"
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_37",
+      "t": "on",
+      "m": 0,
+      "c": 1020,
+      "r": "version between 1.0.0 and 2.0.0"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "BETWEEN_SEMVER - does not match",
+    "method": "getTreatment",
+    "key": "test_user_38",
+    "bucketingKey": null,
+    "flagName": "flag_between_semver",
+    "attributes": {
+      "version": "2.5.0"
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_38",
+      "t": "off",
+      "m": 0,
+      "c": 1020,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "IN_LIST_SEMVER - matches",
+    "method": "getTreatment",
+    "key": "test_user_39",
+    "bucketingKey": null,
+    "flagName": "flag_in_list_semver",
+    "attributes": {
+      "version": "2.0.0"
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_39",
+      "t": "on",
+      "m": 0,
+      "c": 1021,
+      "r": "version in list {1.0.0, 2.0.0, 3.0.0}"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "IN_LIST_SEMVER - does not match",
+    "method": "getTreatment",
+    "key": "test_user_40",
+    "bucketingKey": null,
+    "flagName": "flag_in_list_semver",
+    "attributes": {
+      "version": "2.5.0"
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_40",
+      "t": "off",
+      "m": 0,
+      "c": 1021,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "IN_SPLIT_TREATMENT - matches (dependency returns on)",
+    "method": "getTreatment",
+    "key": "test_user_41",
+    "bucketingKey": null,
+    "flagName": "flag_in_split_treatment",
+    "attributes": {
+      "is_premium": true
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_41",
+      "t": "on",
+      "m": 0,
+      "c": 1022,
+      "r": "flag_equal_to_boolean returns on"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "IN_SPLIT_TREATMENT - does not match (dependency returns off)",
+    "method": "getTreatment",
+    "key": "test_user_42",
+    "bucketingKey": null,
+    "flagName": "flag_in_split_treatment",
+    "attributes": {
+      "is_premium": false
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_42",
+      "t": "off",
+      "m": 0,
+      "c": 1022,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "NEGATE - matches (is_premium is false, negated becomes true)",
+    "method": "getTreatment",
+    "key": "test_user_43",
+    "bucketingKey": null,
+    "flagName": "flag_negate_boolean",
+    "attributes": {
+      "is_premium": false
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_43",
+      "t": "on",
+      "m": 0,
+      "c": 1023,
+      "r": "is_premium is NOT true"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "NEGATE - does not match (is_premium is true, negated becomes false)",
+    "method": "getTreatment",
+    "key": "test_user_44",
+    "bucketingKey": null,
+    "flagName": "flag_negate_boolean",
+    "attributes": {
+      "is_premium": true
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_44",
+      "t": "off",
+      "m": 0,
+      "c": 1023,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "IN_RULE_BASED_SEGMENT - matches (account_value >= 1000)",
+    "method": "getTreatment",
+    "key": "user_c",
+    "bucketingKey": null,
+    "flagName": "flag_in_rule_based_segment",
+    "attributes": {
+      "account_value": 5000
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "user_c",
+      "t": "on",
+      "m": 0,
+      "c": 2024,
+      "r": "in rbs high_value"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "IN_RULE_BASED_SEGMENT - does not match (account_value < 1000)",
+    "method": "getTreatment",
+    "key": "user_c",
+    "bucketingKey": null,
+    "flagName": "flag_in_rule_based_segment",
+    "attributes": {
+      "account_value": 500
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "user_c",
+      "t": "off",
+      "m": 0,
+      "c": 2024,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "multi matchers combined - does not match (key = mauro but age < 30)",
+    "method": "getTreatment",
+    "key": "mauro",
+    "bucketingKey": null,
+    "flagName": "multi_matchers_combined",
+    "attributes": {
+      "age": 25
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "mauro",
+      "t": "off",
+      "m": 0,
+      "c": 1783537726871,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "multi matchers combined - matches (key = mauro AND age >= 30)",
+    "method": "getTreatment",
+    "key": "mauro",
+    "bucketingKey": null,
+    "flagName": "multi_matchers_combined",
+    "attributes": {
+      "age": 35
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "mauro",
+      "t": "on",
+      "m": 0,
+      "c": 1783537726871,
+      "r": "in list [mauro] and age >= 30"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "multi matchers combined - does not match (key not in list)",
+    "method": "getTreatment",
+    "key": "other_user",
+    "bucketingKey": null,
+    "flagName": "multi_matchers_combined",
+    "attributes": {
+      "age": 35
+    },
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "other_user",
+      "t": "off",
+      "m": 0,
+      "c": 1783537726871,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "missing attribute returns off (age not provided)",
+    "method": "getTreatment",
+    "key": "test_user_50",
+    "bucketingKey": null,
+    "flagName": "flag_greater_than_or_equal_to",
+    "attributes": {},
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_50",
+      "t": "off",
+      "m": 0,
+      "c": 1003,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "negated IN_SEGMENT - user NOT in segment gets on",
+    "method": "getTreatment",
+    "key": "user_regular",
+    "bucketingKey": null,
+    "flagName": "flag_negate_in_segment",
+    "attributes": {},
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "user_regular",
+      "t": "on",
+      "m": 0,
+      "c": 1030,
+      "r": "NOT in segment premium_users"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "negated IN_SEGMENT - user in segment gets off",
+    "method": "getTreatment",
+    "key": "user_c",
+    "bucketingKey": null,
+    "flagName": "flag_negate_in_segment",
+    "attributes": {},
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "user_c",
+      "t": "off",
+      "m": 0,
+      "c": 1030,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "MATCHES_STRING negate - missing attribute returns off (spec: null attribute always false, even negated)",
+    "method": "getTreatment",
+    "key": "test_user_51",
+    "bucketingKey": null,
+    "flagName": "flag_negate_matches_string",
+    "attributes": {},
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test_user_51",
+      "t": "off",
+      "m": 0,
+      "c": 1031,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "MATCHES_STRING negate - matches when attribute present and does not match pattern",
+    "method": "getTreatment",
+    "key": "test_user_52",
+    "bucketingKey": null,
+    "flagName": "flag_negate_matches_string",
+    "attributes": {
+      "email": "JOHN@test.com"
+    },
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test_user_52",
+      "t": "on",
+      "m": 0,
+      "c": 1031,
+      "r": "email does not match regex"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "prerequisite met - user in RBS gets on (key ends with @split.io, prerequisite satisfied)",
+    "method": "getTreatment",
+    "key": "test@split.io",
+    "bucketingKey": null,
+    "flagName": "always_on_if_prerequisite",
+    "attributes": {},
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "test@split.io",
+      "t": "on",
+      "m": 0,
+      "c": 5,
+      "r": "always_on_if_prerequisite label"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "prerequisite not met - user NOT in RBS gets off (key does not end with @split.io)",
+    "method": "getTreatment",
+    "key": "test@gmail.com",
+    "bucketingKey": null,
+    "flagName": "always_on_if_prerequisite",
+    "attributes": {},
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "test@gmail.com",
+      "t": "off",
+      "m": 0,
+      "c": 5,
+      "r": "prerequisites not met"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "prerequisite not met - excluded user gets off (key in RBS excluded list)",
+    "method": "getTreatment",
+    "key": "mauro@split.io",
+    "bucketingKey": null,
+    "flagName": "always_on_if_prerequisite",
+    "attributes": {},
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "mauro@split.io",
+      "t": "off",
+      "m": 0,
+      "c": 5,
+      "r": "prerequisites not met"
+    },
+    "expectedConfig": null
+  }
+]

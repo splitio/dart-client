@@ -1,0 +1,98 @@
+[
+  {
+    "test": "whitelisted user gets on treatment",
+    "method": "getTreatment",
+    "key": "user_a",
+    "bucketingKey": null,
+    "flagName": "test_flag_whitelist",
+    "attributes": {},
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "user_a",
+      "t": "on",
+      "m": 0,
+      "c": 1000,
+      "r": "whitelisted"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "whitelisted user with config",
+    "method": "getTreatmentWithConfig",
+    "key": "user_a",
+    "bucketingKey": null,
+    "flagName": "test_flag_whitelist",
+    "attributes": {},
+    "expectedTreatment": "on",
+    "expectedImpression": {
+      "k": "user_a",
+      "t": "on",
+      "m": 0,
+      "c": 1000,
+      "r": "whitelisted"
+    },
+    "expectedConfig": "{\"color\":\"green\"}"
+  },
+  {
+    "test": "user in segment beta_users gets beta",
+    "method": "getTreatment",
+    "key": "user_c",
+    "bucketingKey": null,
+    "flagName": "test_flag_segment",
+    "attributes": {},
+    "expectedTreatment": "beta",
+    "expectedImpression": {
+      "k": "user_c",
+      "t": "beta",
+      "m": 0,
+      "c": 1001,
+      "r": "in segment beta_users"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "user not in segment gets default",
+    "method": "getTreatment",
+    "key": "user_z",
+    "bucketingKey": null,
+    "flagName": "test_flag_segment",
+    "attributes": {},
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "user_z",
+      "t": "off",
+      "m": 0,
+      "c": 1001,
+      "r": "default rule"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "killed flag returns default treatment",
+    "method": "getTreatment",
+    "key": "user_a",
+    "bucketingKey": null,
+    "flagName": "test_flag_killed",
+    "attributes": {},
+    "expectedTreatment": "off",
+    "expectedImpression": {
+      "k": "user_a",
+      "t": "off",
+      "m": 0,
+      "c": 1002,
+      "r": "killed"
+    },
+    "expectedConfig": null
+  },
+  {
+    "test": "non-existent flag returns control",
+    "method": "getTreatment",
+    "key": "user_a",
+    "bucketingKey": null,
+    "flagName": "non_existent_flag",
+    "attributes": {},
+    "expectedTreatment": "control",
+    "expectedImpression": null,
+    "expectedConfig": null
+  }
+]

@@ -75,7 +75,7 @@ discriminator for the entire module decomposition:
 flowchart TD
   subgraph SHELL["Public Shell — Axis 3 (topology)"]
     F["SplitFactory (composition root / DI)"]
-    C["SplitClient — CS: bound Target<br/>SS(future): Target per call"]
+    C["SplitClient — CS: bound Key, attributes per call"]
     CM["ClientManager — per-Key registry (CS only)"]
   end
   C -->|"evaluate(Target, flag, opts)"| EV
@@ -130,7 +130,7 @@ flowchart TD
 
 | Module | Responsibility | Key contracts |
 |--------|----------------|---------------|
-| `models` | Public domain objects | `Key`, `Target`, `Attributes`, public `EvaluationResult`, `EvaluationOptions`, `SplitEvent`, `ParsedSplit` metadata |
+| `models` | Public domain objects | `Key`, `Target`, `Attributes`, public `EvaluationResult`, `EvaluationOptions`, `ParsedSplit` metadata |
 | `dtos` | Wire/serialization types | `Split`, `SplitChange`/`TargetingRulesChange`, `SegmentChange`, `RuleBasedSegment`, `Condition`, `Matcher`, `MatcherGroup`, `Partition`, `KeySelector` |
 | `parsing` | DTO → parsed engine model | `RuleParser`/`SplitChangeProcessor` → `ParsedSplit` (+ inner `TargetingRule`) |
 | `engine` | **Pure** rule-match (no I/O) | `TargetingEngine`, engine `EvaluationResult`, `EvaluationContext`, `Matcher`, `MatcherRegistry`, `Bucketer` (murmur3) |
@@ -157,7 +157,7 @@ flowchart TD
 
 | Module | Responsibility | Key contracts |
 |--------|----------------|---------------|
-| `cs-client` | Public shell with bound `Target` | `SplitClient.getTreatment(flag, opts)` |
+| `cs-client` | Public shell with bound `Key` | `SplitClient.getTreatment(flag, {attributes, opts})` |
 | `client-manager` | Per-`Key` registry; ref-counts shared sync; mutates streaming channel set | `ClientManager.getOrCreate/destroy/destroyAll` |
 | `memberships` | Per-`Key` standard (MS) + large (LS) segment store + feed; payload decoder | `MembershipStore`, `MembershipFeed`, `MembershipPayloadDecoder` |
 | `cs-unique-keys` | In-memory set-based MTK tracker | implements `UniqueKeysTracker` |
@@ -197,7 +197,7 @@ flowchart LR
     TR["TargetingRule{seed, killed, defaultTreatment,<br/>conditions, trafficAllocation, algo, prerequisites}"]
   end
   subgraph PUBLIC["Public / domain"]
-    PER["public EvaluationResult{flag, treatment, config?, changeNumber?, label?}"]
+    PER["public EvaluationResult{treatment, config?}"]
     EER["engine EvaluationResult{treatment, label}"]
   end
   SC --> SPL --> PS --> TR
@@ -229,14 +229,14 @@ EvaluationOptions { properties: Map<String, Object?>? }          // attached to 
 
 ```
 engine.EvaluationResult { treatment: String, label: String }            // pure, always has label
-public.EvaluationResult { flag: String, treatment: String,
-                          config: String?, changeNumber: Long?,
-                          label: String? }                              // label nullable + INFORMATIONAL
+public.EvaluationResult { treatment: String, config: String? }          // returned by WithConfig methods only
 ```
 
-- The engine result `label` MUST always be present.
-- The public `label` MUST be populated from the engine label, but it is **not part of the stability
-  contract** — consumers MUST NOT branch on it.
+- The engine result `label` MUST always be present (used internally for impressions).
+- The public `EvaluationResult` MUST contain only `treatment` and `config`. Internal metadata
+  (`label`, `changeNumber`, `flag`) MUST NOT be exposed to SDK consumers.
+- The base `getTreatment*` methods MUST return only the treatment `String` (or `'control'` on error).
+  The `WithConfig` variants MUST return `EvaluationResult` containing both treatment and config.
 
 ### 4.3 Rule model (stored vs engine)
 
@@ -263,8 +263,11 @@ UniqueKeys (MTK) (feature → set of keys)
 ### 4.6 Lifecycle event
 
 ```
-SplitEvent ∈ { READY, READY_TIMEOUT, UPDATE }   // v1; READY_FROM_CACHE deferred
-UPDATE payload: changed flag names (active + archived)
+Readiness events:
+- READY — latched; delivered as Future<void> whenReady()
+- READY_TIMEOUT — latched; delivered as Future<void> whenTimeout()
+- UPDATE — recurring; delivered as Stream<List<String>> whenUpdated() with payload of changed flag names (active + archived)
+// READY_FROM_CACHE deferred to persistence SPI (§14)
 ```
 
 - v1 MUST emit only `READY`, `READY_TIMEOUT`, and `UPDATE`. `READY_FROM_CACHE` MUST be deferred.
@@ -290,7 +293,7 @@ bool isInRuleBasedSegment(segmentName, key, bucketingKey, Attributes)           
 
 ```mermaid
 flowchart TD
-  A["SplitClient.getTreatment(flag) — sync, bound Target"] --> B{"validate input (§16)"}
+  A["SplitClient.getTreatment(flag, {attributes}) — sync, bound Key"] --> B{"validate input (§16)"}
   B -- invalid --> Z["control + 'validation' label"]
   B -- ok --> R{"client ready?"}
   R -- no --> NR["fallback + 'not ready' label"]
@@ -302,9 +305,9 @@ flowchart TD
   E -->|"needs dep/prereq"| RC["ctx.evaluate (recursive) → back to RuleStore.get"]
   E -->|"unsupported matcher"| UM["control + 'unsupported matcher' label"]
   E --> RES["engine result {treatment, label}"]
-  RES --> ASM["assemble public EvaluationResult<br/>(attach config, changeNumber, flag)"]
+  RES --> ASM["assemble result<br/>(attach config if WithConfig; record impression)"]
   ASM --> IMP["client enqueues KeyImpression (engine stays pure)"]
-  ASM --> OUT["return (synchronous)"]
+  ASM --> OUT["return treatment String or EvaluationResult (synchronous)"]
   IMP --> DD["ImpressionsObserver dedup / strategy (§13)"]
 ```
 
@@ -631,9 +634,8 @@ one typed payload MUST be present per `Matcher`, selected by `matcherType`:
 
 ```dart
 // Evaluator (Axis 2)
-public.EvaluationResult evaluate(Target, flag, EvaluationOptions?)              // sync, pure, non-throwing
-List<...> evaluateMany(Target, List<flag>, opts?)
-List<...> evaluateByFlagSets(Target, List<flagSet>, opts?)
+engine.EvaluationResult evaluate(matchingKey, bucketingKey, flag, attributes)   // sync, pure, non-throwing
+// Client layer assembles the public return (String or EvaluationResult) from the engine result
 
 // Store<T> (shared core; persistence = SPI)
 void applyChange(Change<T>)        // advances change-number + data atomically (§9)
@@ -653,16 +655,18 @@ Future<void> fetch(targetChangeNumberProvider, keys, fetchAction, freshnessCheck
 Future<void> start/stop(); void pause/resume()
 
 // AuthProvider (shared core; per-endpoint Strategy — NOT an axis)
-Future<Credential> credential(Target? target)   // on-demand; cached/fetched as needed, NO periodic refresh
+Future<Credential> credential(Target? target)   // on-demand; cached/fetched as needed (provider owns NO timer)
 void invalidate(Target? target)                  // drop cached credential (e.g. on 401); no-op for static
 void clearAll()                                   // no-op for static
   // Credential { authHeader }                      ← all HTTP requests attach this
   // JwtCredential extends Credential { token, channels, pushEnabled, expiresAt, connDelaySeconds }
   // v1 wiring: StaticKeyAuthProvider("Bearer <sdkKey>") for data feeds + recorders;
   //            JwtAuthProvider for streaming (its fetcher authenticates via the static sdkKey credential).
-  // Refresh is ON-DEMAND only (no background token-refresh task): the JWT cache is revalidated
-  // (expiresAt − expiryBuffer) when a credential is requested at (re)connect; expiry mid-connection
-  // is handled reactively via the token-error → invalidate → reconnect path (§11.3).
+  // Provider refresh is ON-DEMAND only (the provider owns NO timer): the JWT cache is revalidated
+  // (expiresAt − expiryBuffer) when a credential is requested at (re)connect. The PERIODIC proactive
+  // refresh (expiresAt − refreshLeadTime, 10 min) is owned by the streaming runtime (§11.3), which
+  // reconnects to pull a fresh JWT; expiry mid-connection is a reactive backstop via the
+  // token-error → invalidate → reconnect path (§11.3).
 
 // Axis-2 ports
 List<FeedUpdate> NotificationProcessor.process(RawNotification)        // data notifications only
@@ -692,7 +696,8 @@ Normative obligations on these contracts:
 - `getTreatment`/`Evaluator.evaluate` MUST be synchronous, pure, and non-throwing.
 - `NetworkFacade` and `local-network` MUST build the query string in the canonical §10.4 order, with
   `till` always LAST.
-- `AuthProvider` MUST NOT run a periodic refresh task; refresh MUST be on-demand only.
+- `AuthProvider` MUST NOT run a periodic refresh task itself; provider refresh MUST be on-demand
+  only. The periodic proactive token refresh is owned by the streaming runtime (§11.3).
 
 ---
 
@@ -700,36 +705,64 @@ Normative obligations on these contracts:
 
 ```dart
 class SplitFactory {                                   // composition root; Axis 2+3 wiring chosen here
-  static SplitFactory create(SdkKey, SplitClientConfig);   // SYNCHRONOUS; NoOp on invalid key
-  SplitClient client([Target? target]);                    // CS: per-Key via ClientManager
+  static SplitFactory create(SdkKey, SplitClientConfig, Object key);   // SYNCHRONOUS; NoOp on invalid key
+  SplitClient client([Object? key]);                                    // CS: default client when key omitted; per-Key otherwise
   SplitManager manager();
   UserConsent userConsent();                               // §7.2
   Future<void> destroy();
 }
 
-class SplitClient {                                    // CS shell (bound Target); eval is SYNCHRONOUS
-  public.EvaluationResult getTreatment(String flag, [EvaluationOptions? opts]);
-  List<public.EvaluationResult> getTreatments(List<String> flags, [opts]);
-  List<public.EvaluationResult> getTreatmentsByFlagSets(List<String> flagSets, [opts]);
+class SplitClient {                                    // CS shell (bound Key); eval is SYNCHRONOUS
+  String getTreatment(String flag, {Map<String, Object?>? attributes, EvaluationOptions? opts});
+  List<String> getTreatments(List<String> flags, {Map<String, Object?>? attributes, EvaluationOptions? opts});
+  List<String> getTreatmentsByFlagSets(List<String> flagSets, {Map<String, Object?>? attributes, EvaluationOptions? opts});
 
-  void setTarget(Target target);                       // async fire-and-forget (CS only)
-  bool track(String eventType, {double? value, Map<String,Object?>? properties});  // returns accepted
+  EvaluationResult getTreatmentWithConfig(String flag, {Map<String, Object?>? attributes, EvaluationOptions? opts});
+  List<EvaluationResult> getTreatmentsWithConfig(List<String> flags, {Map<String, Object?>? attributes, EvaluationOptions? opts});
+  List<EvaluationResult> getTreatmentsWithConfigByFlagSets(List<String> flagSets, {Map<String, Object?>? attributes, EvaluationOptions? opts});
 
-  Stream<SplitEvent> events();                         // single, serial, ordered; milestones latched
+  bool track(String eventType, String trafficType, {double? value, Map<String, Object?>? properties});
+
+  Future<void> whenReady();                            // latched; completes when READY fires
+  Future<void> whenTimeout();                          // latched; completes when READY_TIMEOUT fires; independent of whenReady()
+  Stream<List<String>> whenUpdated();                  // broadcast; payload = changed flag names (§4.6); not latched
+
   Future<void> flush();
   Future<void> destroy();
 }
+
+class EvaluationResult {
+  final String treatment;
+  final String? config;
+}
 ```
 
-- **Evaluation MUST be synchronous**; lifecycle/IO (`events`, `flush`, `destroy`) MUST be async.
-- **An invalid SDK key/key MUST produce a `NoOpSplitFactory`** whose clients MUST return control and
-  MUST accept no events.
-- **SS (future)** MUST change only the shell: `getTreatment(Target, flag, …)`; it MUST NOT expose
-  `setTarget`.
-- **There MUST be no `WithConfig` method variants.** The single `public.EvaluationResult` already
-  carries a **nullable `config`** (§4.2), gated by `configsEnabled` (§14) — so `getTreatmentWithConfig*`
-  from the JS/full SDKs MUST collapse into the base methods here. The API SHOULD stay tight: one
-  method per arity.
+- **Evaluation MUST be synchronous**; lifecycle/IO (`whenReady`, `whenTimeout`, `whenUpdated`, `flush`, `destroy`) MUST be async.
+- **`getTreatment*` methods MUST return `String`** (the treatment name only). The `WithConfig`
+  variants (`getTreatmentWithConfig`, `getTreatmentsWithConfig`, `getTreatmentsWithConfigByFlagSets`)
+  MUST return `EvaluationResult` which carries both the treatment and the nullable config.
+- **`EvaluationResult` MUST contain only `treatment` (String) and `config` (String?)**. Internal
+  metadata (label, changeNumber) MUST NOT be exposed in the public type.
+- **Attributes MUST be passed per evaluation call**, not bound to the client. This follows the
+  standard client-side SDK pattern where attributes are transient context provided at evaluation time.
+- **An invalid SDK key/key MUST produce a `NoOpSplitFactory`** whose clients MUST return `'control'`
+  and empty results, and MUST accept no events.
+- **`SplitFactory.client()` MUST accept an optional `Key`**: when omitted, it MUST return the default
+  client bound to the `Key` provided to `SplitFactory.create()`; when present, it MUST return a
+  client bound to the supplied `Key` (with per-Key memberships fetched on demand).
+- **The `key` parameter of `SplitFactory.create` and `SplitFactory.client` MUST accept
+  either a `Key` or a `String`.** A `String s` MUST be normalized to
+  `Key(matchingKey: s, bucketingKey: null)`. To specify a bucketing key, callers MUST
+  use the `Key(matchingKey:, bucketingKey:)` constructor.
+- **If `SplitFactory.create` receives a `key` argument that is neither `Key` nor `String`**,
+  it MUST return the NoOp factory (consistent with the "invalid SDK key/key → NoOp" rule
+  above).
+- **If `SplitFactory.client` receives a `key` argument that is neither `Key`, `String`,
+  nor `null`**, it MUST log a warning and return the client bound to the bootstrap `Key`
+  supplied to `SplitFactory.create` — i.e. behave as if called with no argument.
+- **Named parameters MUST be used** for optional arguments (attributes, opts, value, properties)
+  following Dart best practices. Positional optionals MUST NOT be used when there are multiple
+  optional parameters.
 
 ### 7.1 SplitManager & SplitView
 
@@ -807,8 +840,12 @@ flowchart TD
 - `clientReady` MUST be `globalRulesReady && globalRbsReady && thisClientMembershipsReady`.
 - **Global readiness MUST be latched** → a client created after global sync MUST await only its own
   memberships.
-- There MUST be a single `Stream<SplitEvent>`, serial + dependency-ordered; **milestones (`READY`,
-  `READY_TIMEOUT`) MUST be latched/replayed**; `UPDATE` MUST be recurring/not latched.
+- `whenReady()` and `whenTimeout()` MUST be latched Futures — subscribers after the milestone MUST
+  receive an already-completed Future. They MUST be independent: READY MAY still fire after TIMEOUT.
+- `whenUpdated()` MUST be a broadcast stream of changed flag names (§4.6) and MUST NOT be latched.
+- If a client is destroyed before a milestone fires, its pending Futures MUST complete normally
+  (no error) so awaiters unblock cleanly. The `whenUpdated()` stream MUST close (subscribers
+  receive `onDone`).
 - Evaluation before `READY` MUST return fallback + `not ready`.
 
 ```mermaid
@@ -818,8 +855,6 @@ stateDiagram-v2
   NotReady --> TimedOut: readyTimeout elapsed
   TimedOut --> Ready: state later completes (non-terminal)
   Ready --> Ready: UPDATE (flags/memberships changed)
-  Ready --> Ready: setTarget while ready → UPDATE on new target sync
-  NotReady --> Ready: setTarget while not-ready → READY after new target sync
   Ready --> Destroyed: destroy()
   NotReady --> Destroyed: destroy()
 ```
@@ -841,13 +876,85 @@ no `UPDATE`).
 
 ### 8.5 destroy / flush
 
-- `destroy` (per-client) MUST: set `destroyed` → `flush` → stop/deregister membership feed →
-  `auth.removeTarget` → destroy events manager → if last client, stop global sync/streaming. It MUST
-  be **idempotent.** Post-destroy eval MUST return control (`destroyed`); post-destroy `track` MUST
-  be a no-op.
-- `destroy` (factory) MUST perform `destroyAll` + stop everything.
-- `flush` MUST force all recorders (impressions, counts, unique-keys, events) to flush; its `Future`
-  MUST complete when POSTs are attempted; it MUST be non-destructive.
+#### Destroy semantics (per-client vs factory)
+
+- **Main client** — `factory.client()` (when called with the bootstrap key or no argument) MUST return
+  the main client. Calling `mainClient.destroy()` MUST mark **only the main client** destroyed and
+  MUST perform one final recorder flush (see "Client destroy" below). It MUST NOT stop the sync
+  pipeline, MUST NOT stop recorder timers, MUST NOT dispose factory resources, and MUST NOT affect any
+  shared clients. The factory MUST remain operational after `mainClient.destroy()`.
+- **Shared client** — `factory.client(otherKey)` MUST return a shared client. Calling
+  `sharedClient.destroy()` MUST mark **only that client** destroyed and MUST perform one final recorder
+  flush (see "Client destroy" below). The factory MUST remain operational, and other shared clients
+  MUST continue working.
+- **Factory** — `factory.destroy()` MUST destroy every client the factory has issued (main + all
+  shared) and then perform the full teardown described below. `factory.destroy()` is **NOT** equivalent
+  to `mainClient.destroy()`.
+- **Client caching** — the factory MUST cache issued clients by instance ID (matching key +
+  bucketing key). Subsequent calls to `factory.client(sameKey)` MUST return the same cached instance,
+  including when that instance has already been destroyed. Once destroyed, a cached client stays
+  destroyed for the remaining lifetime of the factory. Users who need a fresh client for a previously
+  used key MUST create a new factory.
+- **Idempotency MUST be enforced** — repeated calls to `destroy()` on the same client or factory MUST
+  be safe no-ops.
+
+#### Factory destroy (full teardown)
+
+When the factory is destroyed, the SDK MUST execute the following steps **in order**:
+
+1. **Mark all issued clients destroyed** — iterate through every client the factory has issued (main
+   and all shared) and mark each destroyed (so cached references reject subsequent method calls). This
+   step MUST complete synchronously, before any `await` in the teardown sequence, so no evaluation or
+   `track()` call can slip through after teardown has begun.
+2. **Stop sync manager** — cancel all poll timers and stop streaming (`SyncManager.stop()`). No new
+   fetches MUST fire after this point.
+3. **Stop recorder timers** — cancel impression/event/count/unique-keys recorder periodic timers
+   (`SyncManager.stopRecorders()`) without flushing.
+4. **Flush recorders** — perform one final POST for each recorder (`SyncManager.flushRecorders()`).
+   Queued impressions and events from all keys (main + shared) MUST be sent.
+5. **Dispose resources** — clear JWT cache, close HTTP client, dispose `EventsManager`. This step MUST
+   be cleanup-only; it MUST NOT trigger additional stop/flush logic.
+
+The ordering (stop timers, then flush) ensures no new data is queued during the final flush.
+
+The factory MUST guard the teardown sequence so that repeated calls to `factory.destroy()` execute
+steps 1–5 at most once. Subsequent calls MUST be safe no-ops.
+
+#### Client destroy (main or shared)
+
+When any client (main or shared) is destroyed via `client.destroy()`:
+- Its `_destroyed` flag MUST be set to `true`.
+- The client MUST immediately reject all subsequent method calls (see "Post-destroy behavior" below).
+- The SDK MUST perform one final recorder flush (`SyncManager.flushRecorders()`) so queued impressions
+  and events are sent before the caller's `Future` resolves. Because recorder queues are factory-wide,
+  this flushes data from **all** issued clients, not just the destroyed one.
+- The factory MUST remain operational. The sync pipeline (poll timers, streaming), recorder timers,
+  and every other issued client MUST NOT be affected.
+- `client.destroy()` MUST be idempotent — repeated calls MUST be safe no-ops (the second call MUST
+  NOT trigger another flush).
+
+#### Post-destroy behavior (per client)
+
+Once a client (main or shared) is marked destroyed, its methods MUST behave as follows:
+
+| Method | Behavior after destroy |
+|--------|------------------------|
+| `track(...)` | MUST log `"track: Client has already been destroyed - no calls possible"` and return `false`. The event MUST NOT be queued. |
+| `getTreatment(...)` | MUST log `"getTreatment: Client has already been destroyed - no calls possible"` and return `'control'`. |
+| `getTreatments(...)` | MUST return a list of `'control'` (one per requested flag). |
+| `getTreatmentsByFlagSets(...)` | MUST return a list of `'control'` (one per flag in the requested sets). |
+| `getTreatmentWithConfig(...)` | MUST return `EvaluationResult(treatment: 'control', config: null)`. |
+| `getTreatmentsWithConfig(...)` | MUST return a list of `EvaluationResult(treatment: 'control', config: null)`. |
+| `getTreatmentsWithConfigByFlagSets(...)` | MUST return a list of `EvaluationResult(treatment: 'control', config: null)`. |
+| `flush()` | MUST return an immediately-completed `Future` and MUST NOT call `SyncManager.flushRecorders()`. |
+| `whenReady()` / `whenTimeout()` / `whenUpdated()` | MUST remain readable. Lifecycle events MUST complete normally (not error) so awaiters unblock. The `whenUpdated()` stream SHOULD close on destroy. |
+
+#### flush
+
+- `flush()` MUST force all recorders (impressions, counts, unique-keys, events) to flush immediately.
+- Its `Future` MUST complete when the POST attempts finish (regardless of HTTP success/failure).
+- `flush()` MUST be non-destructive — it MUST NOT alter the destroyed state or stop any timers.
+- `flush()` on a destroyed client MUST be a no-op (returns immediately without flushing).
 
 ---
 
@@ -1024,11 +1131,21 @@ stateDiagram-v2
 
 - Streaming MUST obtain its credential via the **`JwtAuthProvider`** (§6): `JwtCredential = { token,
   channels, pushEnabled, expiresAt, connDelaySeconds }`; `pushEnabled=false` MUST mean poll only.
-- **Refresh MUST be on-demand — there MUST be NO periodic token-refresh task** (unlike
-  `android-client` / `go-client`). The provider MUST revalidate its cache
-  (`now ≥ expiresAt − expiryBufferSeconds`) only when a credential is **requested at (re)connect**,
-  fetching a fresh JWT if stale. A token that expires mid-connection MUST be handled **reactively**:
-  the server emits a token error and the FSM MUST reconnect, which MUST pull a fresh credential.
+- **The streaming runtime MUST run a periodic token-refresh task** (as `android-client` /
+  `go-client` do). On each successful streaming connect the runtime MUST schedule a **single**
+  refresh to fire at `expiresAt − refreshLeadTime` (`refreshLeadTime = 600 s`, i.e. 10 min before
+  expiry); when `expiresAt − refreshLeadTime` is already in the past (short-TTL token) the delay MUST
+  be clamped to a small minimum so the refresh still fires before expiry. When the refresh fires it
+  MUST invalidate the token, tear down the current socket, and reconnect (which MUST pull a fresh
+  JWT) — reusing the token-error → invalidate → reconnect path. There MUST be **at most one** refresh
+  task pending at a time (deduped like reconnect). The refresh task MUST be **cancelled** whenever the
+  streaming connection goes down/stops, and **rescheduled** from the fresh token on the next
+  successful connect. The `JwtAuthProvider` itself MUST NOT own this timer — it MUST remain
+  **on-demand** at the `credential()` boundary (revalidating its cache
+  `now ≥ expiresAt − expiryBufferSeconds` when requested at (re)connect); the **periodic scheduling is
+  owned by the streaming runtime** (§11), not the provider. A token that expires mid-connection
+  without a prior proactive refresh MUST still be handled **reactively** as a backstop: the server
+  emits a token error and the FSM MUST reconnect, which MUST pull a fresh credential.
 - **Token error** = HTTP `401` or code `40140–40149` → it MUST trigger `InvalidateToken`
   (`AuthProvider.invalidate`) + reconnect.
 - Reconnect MUST be **deduped** (also via the provider's in-flight dedup); `≥2 consecutive failures`
@@ -1256,22 +1373,18 @@ SplitClientConfig {
   FallbackTreatmentsConfiguration? fallbackTreatments;  // global + per-flag control overrides (§15.1)
   LogLevel logLevel;
   ImpressionsMode impressionsMode;        // OPTIMIZED | DEBUG | NONE
-  bool configsEnabled = true;             // see §14.1
   ConsentStatus userConsent = GRANTED;    // initial consent (§7.2)
   ImpressionListener? impressionListener; // optional SPI (§13.3)
 }
 ```
 
-### 14.1 Dynamic configurations (`configsEnabled`)
+### 14.1 Dynamic configurations
 
 Each flag MAY attach a per-treatment **config payload** — an opaque JSON **string** keyed by
 treatment name (`ParsedSplit.configurations: Map<treatment, configString>`). The selected treatment's
-config MUST be surfaced as the nullable `config` on the public `EvaluationResult` (§4.2):
-
-- `configsEnabled = true` (default) → `config` MUST be populated when the matched treatment has one,
-  else `null`.
-- `configsEnabled = false` → `config` MUST be **always `null`** (the SDK MUST skip config
-  lookup/attachment), even if the flag defines configurations.
+config MUST be surfaced as the nullable `config` on `EvaluationResult` returned by the `WithConfig`
+methods (§7). The base `getTreatment*` methods MUST NOT return config — callers that need it MUST
+use the `WithConfig` variants.
 
 The SDK MUST treat the config as an opaque string (no parsing/validation); decoding is the caller's
 concern.
@@ -1333,8 +1446,8 @@ the single, multi, and by-flag-set evaluation methods (§7), per flag.
 
 - `treatment` MUST become the configured fallback treatment.
 - `config` MUST become the fallback entry's `config` (a bare-string entry yields `config = null`). This
-  fallback `config` is taken from the fallback definition directly and is **independent of
-  `configsEnabled`** (§14.1) and of any config the flag itself defines.
+  fallback `config` is taken from the fallback definition directly and is **independent of** any
+  config the flag itself defines.
 - `label` MUST be the original engine/SDK label **prefixed with `"fallback - "`** (constant
   `FALLBACK_PREFIX`). Example: a not-ready control becomes label `fallback - not ready`.
 
@@ -1390,10 +1503,10 @@ v1 MUST include:
 - Combined rules+rbs poll feed (single fetch per cycle, dual cursor; converge across cycles) + per-Key membership feed (MS + LS).
 - Streaming with full FSM (policy + runtime), 3-axis push gate, JWT auth, reconnect/backoff; `OnDemandFetchCoordinator` (CDN bypass, toggleable).
 - Notification strategies: flag in-place (`pcn`) + 4 membership strategies (MS + LS) + `Decompressor` SPI + `SyncDelayCalculator`.
-- Single ordered, latched event `Stream` (`READY`, `READY_TIMEOUT`, `UPDATE` w/ changed flag names).
+- Latched `Future<void> whenReady()` / `whenTimeout()` milestones + broadcast `Stream<List<String>> whenUpdated()` with changed flag names (§4.6).
 - Events + impressions recorders (3 modes; impressions / counts / unique-keys); CS set-based MTK.
 - Optional **impression listener** SPI (§13.3); **user consent** GRANTED/DECLINED/UNKNOWN gating (§7.2).
-- **`SplitManager`** (`split`/`splits`/`names` → `SplitView`, §7.1); dynamic configs via `configsEnabled` (§14.1).
+- **`SplitManager`** (`split`/`splits`/`names` → `SplitView`, §7.1); dynamic configs via `WithConfig` methods (§14.1).
 - Grouped/normalized config; layered fallback treatments (global + per-flag, §15.1); validators + limits; non-throwing eval; `NoOp` factory.
 - In-memory storage with **no-op `PersistentStore`** (`loadLocal()` always called).
 - Single-isolate, lock-free consistency model.
@@ -1407,8 +1520,8 @@ The following capabilities MUST NOT ship in v1 but MUST be reachable via the dec
 | REMOTE evaluation | 2 | implement `Evaluator` (cache lookup) + remote `NetworkFacade` + remote `NotificationProcessor` (`EVALUATION_UPDATE`) |
 | Server-Side topology | 3 | new shell (target per call) + global `SegmentStore` + single client + bloom MTK; large-segment matcher stays unsupported |
 | Durable persistence | 1 | implement `PersistentStore` SPI; re-enable `READY_FROM_CACHE` |
+| whenReadyFromCache() / onReadyFromCache | shared | add after PersistentStore SPI lands; not in v1 public API |
 | Telemetry | shared | new `Recorder<T>` + config |
-| `whenReady()` convenience | shared | thin `Future` view over latched `READY` |
 
 ---
 
@@ -1488,11 +1601,13 @@ with the static `Bearer <sdkKey>` credential.
 - **Token decode (inside the fetcher):** the fetcher MUST decode the JWT body →
   `x-ably-capability` (JSON) → **channel set**; `iat`/`exp` MUST be mandatory; `exp` MUST populate
   `JwtCredential.expiresAt`.
-- **Refresh MUST be on-demand, not periodic.** The provider MUST revalidate against
-  `expiresAt − expiryBufferSeconds` **only when a credential is requested at (re)connect**; there MUST
-  be **no background refresh timer**. Expiry mid-connection MUST be handled reactively (token error →
-  invalidate → reconnect; §11.3). Defaults: `expiryBufferSeconds = 60`, fallback TTL `3600` s when the
-  response carries no `exp`.
+- **Refresh MUST be periodic, owned by the streaming runtime (§11.3).** The **provider** MUST remain
+  on-demand — it MUST revalidate against `expiresAt − expiryBufferSeconds` **only when a credential is
+  requested at (re)connect** and MUST NOT own a background timer. The **streaming runtime** MUST
+  schedule a single proactive refresh at `expiresAt − refreshLeadTime`, cancelled/rescheduled on the
+  streaming connection edges. Expiry mid-connection MUST still be handled reactively as a backstop
+  (token error → invalidate → reconnect; §11.3). Defaults: `expiryBufferSeconds = 60`,
+  `refreshLeadTime = 600` s (10 min), fallback TTL `3600` s when the response carries no `exp`.
 - **SSE connect:** `GET {streaming}/sse?channels=<csv>&accessToken=<token>&v=<ablyApiVersion>&heartbeats=true`.
   Control channels MUST be prefixed `[?occupancy=metrics.publishers]` (URL-encoded) to receive
   occupancy frames.
@@ -1607,8 +1722,9 @@ These illustrate canonical consumer wiring and are non-normative:
 - **Readiness/lifecycle bridge** — the `EventsManager` (§3.1 `events`) MUST NOT subscribe to the
   bus directly; instead an `EventsManagerObserver` adapter SHOULD wrap it as the `Observer`. This
   adapter maps selected internal `ObservableEvent` types onto the `EventsManager`'s own events API
-  (emitting the `SplitEvent`s of §4.6), keeping the `EventsManager` decoupled from the observer
-  module. Such a bridge MAY scope key-specific events by a `matchingKey` property.
+  (calling `notifyReady()`, `notifyTimeout()`, or `notifyUpdate()` per §4.6), keeping the
+  `EventsManager` decoupled from the observer module. Such a bridge MAY scope key-specific events
+  by a `matchingKey` property.
 
 Real payloads lifted from the reference SDKs' test fixtures. These are the **known-answer
 vectors** the Dart parsers/decoders MUST satisfy. Each block cites its source. Field shapes are

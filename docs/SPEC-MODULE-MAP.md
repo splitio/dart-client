@@ -14,7 +14,7 @@ Legend — **Form**: `package` = top-level `packages/<name>/`; `dir` = directory
 | `dtos` | dir | `packages/models/lib/src/dto/` | Wire/serialization types live inside `models` |
 | `parsing` | package | `packages/parsing/` | |
 | `engine` | package | `packages/engine/` | Pure, zero-dep matcher engine |
-| `events` | package | `packages/events/` | Readiness/lifecycle manager (was previously homeless) |
+| `events` | package | `packages/events/` | Readiness/lifecycle manager — latched Futures for milestones, broadcast Stream for updates (`EventsManager`: onReady/onTimeout: Completers; onUpdated: broadcast StreamController<List<String>>) |
 | `observer` | package | `packages/observer/` | |
 | `logger` | package | `packages/logger/` | Over `package:logging` (was previously homeless) |
 | `backoff` | external | `package:backoff` (dep of `http_client`) | Exponential backoff math; satisfied by pub `backoff` ^1.0.1 instead of a hand-rolled package. `FixedIntervalBackoffCounter` (not in pub backoff) to be added in `http_client/lib/src/retryable/` if needed |

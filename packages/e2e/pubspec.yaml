@@ -7,8 +7,8 @@ environment:
   sdk: ^3.0.0
 
 dependencies:
-  sdk_single:
-    path: ../sdk_single
+  splitio_client_side:
+    path: ../splitio_client_side
 
 dev_dependencies:
   test: ^1.24.0
