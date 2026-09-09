@@ -296,6 +296,41 @@ void main() {
       expect(result.label, equals(Labels.prerequisitesNotMet));
     });
 
+    test('prerequisites not met returns default treatment config', () {
+      final mockCtx = MockEvaluationContext(
+        evaluations: {
+          'prereq_flag': (
+            treatment: 'off',
+            label: 'default rule',
+          ),
+        },
+      );
+
+      final split = _buildSplit(
+        defaultTreatment: 'off',
+        prerequisites: [
+          const Prerequisite(
+            featureFlagName: 'prereq_flag',
+            treatments: ['on'],
+          ),
+        ],
+        conditions: [
+          _buildRule(
+            partitions: [const Partition(treatment: 'on', size: 100)],
+          ),
+        ],
+        configurations: const {
+          'off': '{"color":"blue"}',
+          'on': '{"color":"red"}',
+        },
+      );
+
+      final result = engine.evaluate('user1', null, split, {}, mockCtx);
+      expect(result.treatment, equals('off'));
+      expect(result.label, equals(Labels.prerequisitesNotMet));
+      expect(result.config, equals('{"color":"blue"}'));
+    });
+
     test('prerequisites met continues evaluation', () {
       final mockCtx = MockEvaluationContext(
         evaluations: {
@@ -347,6 +382,42 @@ void main() {
       }
       // With 1% traffic allocation, most should be excluded
       expect(excluded, greaterThan(80));
+    });
+
+    test('traffic allocation gate returns default treatment config', () {
+      // Use trafficAllocation=1 so keys are excluded (notInSplit path).
+      final split = _buildSplit(
+        defaultTreatment: 'off',
+        trafficAllocation: 1,
+        seed: 42,
+        conditions: [
+          _buildRule(
+            conditionType: ConditionType.rollout,
+            partitions: [const Partition(treatment: 'on', size: 100)],
+          ),
+        ],
+        configurations: const {
+          'off': '{"color":"blue"}',
+          'on': '{"color":"red"}',
+        },
+      );
+
+      // Find a key that lands outside the 1% allocation.
+      String? excludedKey;
+      for (int i = 0; i < 200; i++) {
+        final r = engine.evaluate('user$i', null, split, {}, ctx);
+        if (r.label == Labels.notInSplit) {
+          excludedKey = 'user$i';
+          break;
+        }
+      }
+      expect(excludedKey, isNotNull,
+          reason: 'expected at least one excluded key with 1% allocation');
+
+      final result = engine.evaluate(excludedKey!, null, split, {}, ctx);
+      expect(result.treatment, equals('off'));
+      expect(result.label, equals(Labels.notInSplit));
+      expect(result.config, equals('{"color":"blue"}'));
     });
 
     test('traffic allocation gate allows user when bucket <= allocation', () {

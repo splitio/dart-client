@@ -1,5 +1,7 @@
 # Claude Code local settings
-.claude/settings.local.json
+.claude
+.agents
+.superpowers
 
 # Package lock files (root pubspec.lock is committed; individual packages are not)
 packages/**/pubspec.lock

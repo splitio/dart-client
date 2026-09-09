@@ -37,7 +37,8 @@ class TargetingEngine {
             treatment: rule.defaultTreatment,
             label: Labels.prerequisitesNotMet,
             changeNumber: rule.changeNumber,
-            impressionDisabled: rule.impressionsDisabled);
+            impressionDisabled: rule.impressionsDisabled,
+            config: rule.configurations[rule.defaultTreatment]);
       }
     }
 
@@ -55,7 +56,8 @@ class TargetingEngine {
                 treatment: rule.defaultTreatment,
                 label: Labels.notInSplit,
                 changeNumber: rule.changeNumber,
-                impressionDisabled: rule.impressionsDisabled);
+                impressionDisabled: rule.impressionsDisabled,
+                config: rule.configurations[rule.defaultTreatment]);
           }
         }
       }

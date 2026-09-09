@@ -2,7 +2,7 @@ library splitio_commons;
 
 // core
 export 'src/core/coercion.dart';
-export 'src/core/evaluation_context.dart' hide EvaluationResult;
+export 'src/core/evaluation_context.dart' hide EvaluationResult, EvaluationContext;
 export 'src/core/matching_context.dart';
 export 'src/core/murmur128.dart';
 export 'src/core/murmur3.dart';

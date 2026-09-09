@@ -1,3 +1,7 @@
+2.0.0 (September 9, 2026)
+ - BREAKING: `EvaluationContext` is no longer exported from the `splitio_commons` barrel. Import it from `package:splitio_commons/src/core/evaluation_context.dart` if you still need it, or remove the reference — it was intended as an internal SPI.
+ - Fixed: targeting engine now returns the default treatment's dynamic configuration when evaluation short-circuits on prerequisites-not-met or traffic-allocation exclusion (notInSplit).
+
 1.0.0 (August 28, 2026)
 Initial release. Shared components for the Split Dart SDK. Features:
  - Pure targeting engine (rule-in / result-out) with EvaluationContext callback seam.

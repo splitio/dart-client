@@ -48,8 +48,8 @@ pipeline:
                   name: Install and Run SonarQube Scanner
                   identifier: install_sonarqube_scanner
                   spec:
-                    connectorRef: account.harnessImage
-                    image: sonarsource/sonar-scanner-cli
+                    connectorRef: dockerhub
+                    image: sonarsource/sonar-scanner-cli:latest
                     shell: Bash
                     command: |
                       set -euo pipefail

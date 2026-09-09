@@ -1,3 +1,6 @@
+1.1.0 (September 9, 2026)
+ - updated `splitio_commons` to `^2.0.0`.
+
 1.0.0 (August 28, 2026)
 Initial release. Client-side Dart SDK for Split feature flags. Features:
  - Synchronous local evaluation via SplitFactory.create + per-key SplitClient.
