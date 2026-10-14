@@ -43,58 +43,59 @@ pipeline:
                       dart run melos run analyze
                       dart run melos run test
                       dart run melos run collect-coverage
-              - step:
-                  name: harnessCoverage
-                  identifier: harnessCoverage
-                  when:
-                    stageStatus: Success
-                  template:
-                    templateRef: account.codeCoverage
-                    versionLabel: v1
-                    templateInputs:
+              - parallel:
+                  - step:
                       type: Run
+                      name: Install and Run SonarQube Scanner
+                      identifier: install_sonarqube_scanner
                       spec:
+                        connectorRef: dockerhub
+                        image: sonarsource/sonar-scanner-cli:latest
+                        shell: Bash
+                        command: |
+                          set -euo pipefail
+
+                          if [ -d "/harness/<+codebase.repoName>" ]; then
+                            cd "/harness/<+codebase.repoName>"
+                          fi
+
+                          echo "PWD: $(pwd)"
+                          echo "Coverage file:"
+                          ls -la coverage/lcov.info || echo "NOT FOUND"
+                          wc -l coverage/lcov.info || true
+
+                          SONAR_COMMON="-Dsonar.host.url=https://sonar.harness.io -Dsonar.token=$SONAR_TOKEN -Dsonar.scanner.skipSystemTruststore=true"
+
+                          if [ "<+codebase.prNumber>" != "" ] && [ "<+codebase.prNumber>" != "null" ]; then
+                            echo "Pull Request Analysis"
+                            sonar-scanner $SONAR_COMMON \
+                              -Dsonar.pullrequest.key=<+codebase.prNumber> \
+                              -Dsonar.pullrequest.branch=<+codebase.sourceBranch> \
+                              -Dsonar.pullrequest.base=<+codebase.targetBranch>
+                          else
+                            echo "Branch Analysis"
+                            sonar-scanner $SONAR_COMMON \
+                              -Dsonar.branch.name=<+codebase.branch>
+                          fi
                         envVariables:
-                          patch_coverage_percent: "80"
-                          file_path: coverage/lcov.info
-                          overall_coverage_percent: ""
-                          ignore_failure: "false"
-                          exclude: "**/.dart_tool/**,**/test/**,**/*_test.dart,**/e2e/**"
-              - step:
-                  type: Run
-                  name: Install and Run SonarQube Scanner
-                  identifier: install_sonarqube_scanner
-                  spec:
-                    connectorRef: dockerhub
-                    image: sonarsource/sonar-scanner-cli:latest
-                    shell: Bash
-                    command: |
-                      set -euo pipefail
-
-                      if [ -d "/harness/<+codebase.repoName>" ]; then
-                        cd "/harness/<+codebase.repoName>"
-                      fi
-
-                      echo "PWD: $(pwd)"
-                      echo "Coverage file:"
-                      ls -la coverage/lcov.info || echo "NOT FOUND"
-                      wc -l coverage/lcov.info || true
-
-                      SONAR_COMMON="-Dsonar.host.url=https://sonar.harness.io -Dsonar.token=$SONAR_TOKEN -Dsonar.scanner.skipSystemTruststore=true"
-
-                      if [ "<+codebase.prNumber>" != "" ] && [ "<+codebase.prNumber>" != "null" ]; then
-                        echo "Pull Request Analysis"
-                        sonar-scanner $SONAR_COMMON \
-                          -Dsonar.pullrequest.key=<+codebase.prNumber> \
-                          -Dsonar.pullrequest.branch=<+codebase.sourceBranch> \
-                          -Dsonar.pullrequest.base=<+codebase.targetBranch>
-                      else
-                        echo "Branch Analysis"
-                        sonar-scanner $SONAR_COMMON \
-                          -Dsonar.branch.name=<+codebase.branch>
-                      fi
-                    envVariables:
-                      SONAR_TOKEN: <+secrets.getValue("sonarqube-token")>
-                  timeout: 10m
-                  when:
-                    stageStatus: Success
+                          SONAR_TOKEN: <+secrets.getValue("sonarqube-token")>
+                      timeout: 10m
+                      when:
+                        stageStatus: Success
+                  - step:
+                      name: harnessCoverage
+                      identifier: harnessCoverage
+                      when:
+                        stageStatus: Success
+                      template:
+                        templateRef: account.codeCoverage
+                        versionLabel: v1
+                        templateInputs:
+                          type: Run
+                          spec:
+                            envVariables:
+                              patch_coverage_percent: "80"
+                              file_path: coverage/lcov.info
+                              overall_coverage_percent: ""
+                              ignore_failure: "false"
+                              exclude: "**/.dart_tool/**,**/test/**,**/*_test.dart,**/e2e/**"
