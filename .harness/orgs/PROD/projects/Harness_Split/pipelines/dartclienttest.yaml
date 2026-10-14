@@ -44,6 +44,23 @@ pipeline:
                       dart run melos run test
                       dart run melos run collect-coverage
               - step:
+                  name: harnessCoverage
+                  identifier: harnessCoverage
+                  when:
+                    stageStatus: Success
+                  template:
+                    templateRef: account.codeCoverage
+                    versionLabel: v1
+                    templateInputs:
+                      type: Run
+                      spec:
+                        envVariables:
+                          patch_coverage_percent: "80"
+                          file_path: coverage/lcov.info
+                          overall_coverage_percent: ""
+                          ignore_failure: "false"
+                          exclude: "**/.dart_tool/**,**/test/**,**/*_test.dart,**/e2e/**"
+              - step:
                   type: Run
                   name: Install and Run SonarQube Scanner
                   identifier: install_sonarqube_scanner
