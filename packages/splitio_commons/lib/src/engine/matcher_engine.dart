@@ -42,6 +42,7 @@ bool _matchCombined(
     bucketingKey: bucketingKey ?? matchingKey,
     attributes: attributes,
     evaluator: ctx,
+    logger: ctx.logger,
   );
 
   final result = combined.delegate.match(value, matchingCtx);

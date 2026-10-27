@@ -13,6 +13,7 @@ void main() {
     TelemetryRecorder makeRecorder() {
       capturedRequests = [];
       final client = SplitHttpClient(
+        sdkVersion: 'dart_test-1.0.0',
         apiKey: 'test-api-key',
         client: MockClient((req) async {
           capturedRequests.add(req);

@@ -44,10 +44,7 @@ void main() {
       final key = Key(matchingKey: 'user_a');
       final factory = await _buildFactory(key);
 
-      await factory
-          .client(key)
-          .whenReady()
-          .timeout(const Duration(seconds: 5));
+      await factory.client(key).whenReady().timeout(const Duration(seconds: 5));
 
       // 'bad event' contains a space — invalid per spec §16
       final ok = factory.client(key).track('bad event', 'user');
@@ -61,10 +58,7 @@ void main() {
       final key = Key(matchingKey: 'user_a');
       final factory = await _buildFactory(key);
 
-      await factory
-          .client(key)
-          .whenReady()
-          .timeout(const Duration(seconds: 5));
+      await factory.client(key).whenReady().timeout(const Duration(seconds: 5));
 
       expect(factory.client(key).getTreatment(''), 'control');
       expect(factory.client(key).getTreatment('   '), 'control');
@@ -79,7 +73,7 @@ void main() {
       final factory = SplitFactory.create(
         'fake-api-key',
         _config(backend.url),
-        Key(matchingKey: 'a' * 1025),
+        Key(matchingKey: 'a' * 251),
       );
 
       await Future<void>.delayed(const Duration(milliseconds: 200));

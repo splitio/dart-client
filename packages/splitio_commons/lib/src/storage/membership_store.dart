@@ -1,3 +1,5 @@
+import 'package:splitio_commons/src/storage/segment_membership_resolver.dart';
+
 class MembershipChange {
   final int changeNumber;
   final Set<String> mySegments;
@@ -11,7 +13,12 @@ class MembershipChange {
 }
 
 abstract interface class MembershipStore {
-  void applyMembership(String key, MembershipChange change);
+  /// Applies [change] for [key] and returns whether it actually changed the
+  /// key's mySegments or largeSegments set compared to what was stored
+  /// before (used to drive `whenUpdated()`, spec §4.6/§8.2). A first-ever
+  /// application for an unknown key is a change only if either set is
+  /// non-empty. MUST NOT throw.
+  bool applyMembership(String key, MembershipChange change);
   bool isInSegment(String segmentName, String key);
   bool hasKey(String key);
   int changeNumber(String key);
@@ -27,16 +34,23 @@ abstract interface class MembershipStore {
   Set<String> largeSegmentsForKey(String key);
 }
 
-class InMemoryMembershipStore implements MembershipStore {
+class InMemoryMembershipStore
+    implements MembershipStore, SegmentMembershipResolver {
   final Map<String, _KeyMembership> _memberships = {};
 
   @override
-  void applyMembership(String key, MembershipChange change) {
+  bool applyMembership(String key, MembershipChange change) {
+    final previous = _memberships[key];
     _memberships[key] = _KeyMembership(
       changeNumber: change.changeNumber,
       mySegments: {...change.mySegments},
       largeSegments: {...change.largeSegments},
     );
+    if (previous == null) {
+      return change.mySegments.isNotEmpty || change.largeSegments.isNotEmpty;
+    }
+    return !_setEquals(previous.mySegments, change.mySegments) ||
+        !_setEquals(previous.largeSegments, change.largeSegments);
   }
 
   @override
@@ -67,6 +81,11 @@ class InMemoryMembershipStore implements MembershipStore {
   @override
   Set<String> largeSegmentsForKey(String key) =>
       {...?_memberships[key]?.largeSegments};
+}
+
+bool _setEquals(Set<String> a, Set<String> b) {
+  if (a.length != b.length) return false;
+  return a.containsAll(b);
 }
 
 class _KeyMembership {

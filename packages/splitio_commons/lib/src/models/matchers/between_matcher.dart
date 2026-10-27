@@ -22,7 +22,7 @@ final class BetweenMatcher extends Matcher {
       if (v == null || s == null || e == null) return false;
       return v >= s && v <= e;
     }
-    final v = asLong(attributeValue);
+    final v = asNumber(attributeValue);
     return v != null && v >= start && v <= end;
   }
 }

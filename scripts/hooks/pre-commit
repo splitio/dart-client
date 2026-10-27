@@ -9,6 +9,14 @@ fi
 
 export PATH="/opt/homebrew/bin:$PATH"
 
+echo "Syncing SDK versions..."
+ROOT="$(git rev-parse --show-toplevel)"
+SYNCED="$(cd "$ROOT" && dart run scripts/sync_sdk_versions.dart)"
+if [ -n "$SYNCED" ]; then
+  (cd "$ROOT" && echo "$SYNCED" | xargs git add --)
+  echo "Synced SDK versions: $(echo "$SYNCED" | tr '\n' ' ')"
+fi
+
 echo "Running dart format..."
 dart run melos run format
 

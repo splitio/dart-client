@@ -5,4 +5,6 @@ export 'membership_store.dart';
 export 'persistent_store.dart';
 export 'rule_based_segment_store.dart';
 export 'rule_store.dart';
+export 'segment_membership_resolver.dart';
+export 'segment_store.dart';
 export 'store.dart';

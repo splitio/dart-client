@@ -9,6 +9,7 @@ Consolidated shared library — all domain logic previously split across individ
 | Subdirectory | AGENTS.md | What it does |
 |---|---|---|
 | `lib/src/auth/` | [auth/AGENTS.md](lib/src/auth/AGENTS.md) | JWT credential provisioning + caching for streaming |
+| `lib/src/client/` | _(inline below)_ | Shared client core used by both flavors: `TreatmentEvaluator`, `TreatmentMethods`, `TrackMethod`, `ClientState`, plus `BasicSplitClient`, `SplitManagerImpl`, `UserConsentManager` |
 | `lib/src/core/` | [core/AGENTS.md](lib/src/core/AGENTS.md) | Shared utilities: coercion, semver, EvaluationContext, MatchingContext, murmur hashes |
 | `lib/src/engine/` | [engine/AGENTS.md](lib/src/engine/AGENTS.md) | Pure stateless rule evaluation + matcher dispatch |
 | `lib/src/event_tracker/` | [event_tracker/AGENTS.md](lib/src/event_tracker/AGENTS.md) | Custom event tracking: validation, batching, flushing |
@@ -24,6 +25,16 @@ Consolidated shared library — all domain logic previously split across individ
 | `lib/src/storage/` | [storage/AGENTS.md](lib/src/storage/AGENTS.md) | Generic change-based stores + PersistentStore SPI |
 | `lib/src/sync/` | [sync/AGENTS.md](lib/src/sync/AGENTS.md) | Inbound freshness coordinator: polling + SSE streaming FSM |
 
+## client subdomain
+
+The evaluation/track pipeline shared by `splitio_client_side` and `splitio_server_side` (mirrors JS `sdkClient/client.ts` + `trackMethod.ts`). The flavor `SplitClientImpl`s are thin adapters: they supply the `Key` and implement `ClientState` (`isClientDestroyed`, `isEventsDestroyed`, `isReady`).
+
+- `treatment_evaluator.dart` — one flag: destroyed guards, not-ready `control` + `not ready` impression, missing-flag WARNING, exceptions caught → `control`
+- `treatment_methods.dart` — the six `getTreatment*` (key first): flag-name/flag-set validation, one not-ready WARNING per call, flag-set variants return `{}` before READY
+- `track_method.dart` — `track` validation, traffic-type lowercasing, property limits, consent
+- These are internal: import via `package:splitio_commons/src/client/...`; do NOT add them to the barrel
+- Pipeline behavior is tested here (`test/client/`) against a fake `ClientState`
+
 ## input_validation subdomain
 
 Pure, stateless validator functions. One file per input type, all in `lib/src/input_validation/`. **Never throw** — always return `ValidationResult<T>`.
@@ -37,7 +48,7 @@ Pure, stateless validator functions. One file per input type, all in `lib/src/in
 
 | File | Function(s) | What it validates |
 |---|---|---|
-| `key.dart` | `validateKey` | `Key` matchingKey/bucketingKey — null, empty, >1024 chars |
+| `key.dart` | `validateKey` | `Key` matchingKey/bucketingKey — trims; null, empty after trim, >250 chars |
 | `flag_name.dart` | `validateFlagName` | Single flag name — null, empty, leading/trailing whitespace (warn+trim) |
 | `flag_names.dart` | `validateFlagNames` | List of flag names — null/empty list, drops invalids, dedupes (first-seen order) |
 | `flag_set.dart` | `validateFlagSet` / `validateFlagSets` | Flag set names — regex `^[a-z0-9][_a-z0-9]{0,49}$`, auto-lowercase with warn, dedup+sort |

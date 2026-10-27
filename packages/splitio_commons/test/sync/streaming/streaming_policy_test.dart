@@ -132,24 +132,20 @@ void main() {
   });
 
   group('SocketError', () {
-    test('first retryable failure does NOT set connectionDown', () {
+    test(
+        'first retryable failure (already connected) sets connectionDown + '
+        'poll fallback (§11.3: no more ">= 2 consecutive failures" rule)',
+        () {
       final s = connected();
       final r = StreamingPolicy.reduce(s, const SocketError(retryable: true));
       expect(r.state.consecutiveFailures, 1);
-      expect(r.state.connectionDown, isFalse);
-      expect(r.state.reconnecting, isTrue);
-      expect(r.effects, const [ScheduleReconnect()]);
-    });
-
-    test('second retryable failure sets connectionDown + poll fallback', () {
-      final s = connected(failures: 1);
-      final r = StreamingPolicy.reduce(s, const SocketError(retryable: true));
-      expect(r.state.consecutiveFailures, 2);
       expect(r.state.connectionDown, isTrue);
       expect(r.state.pushUp, isFalse);
+      expect(r.state.reconnecting, isTrue);
       expect(
         r.effects,
         containsAllInOrder(const [
+          CloseCurrentSocket(),
           ScheduleReconnect(),
           EmitDisconnected(),
           NotifyPushDisabled(),
@@ -169,6 +165,44 @@ void main() {
           ),
         ],
       );
+    });
+
+    test(
+        'a SECOND consecutive retryable failure (connection already down) '
+        'still closes the socket, grows backoff and keeps notifying '
+        'push-disabled (idempotently, no duplicate lifecycle edges)', () {
+      final s = connected(failures: 1).copyWith(connectionDown: true);
+      final r = StreamingPolicy.reduce(s, const SocketError(retryable: true));
+      expect(r.state.consecutiveFailures, 2);
+      expect(r.state.connectionDown, isTrue);
+      expect(r.state.pushUp, isFalse);
+      // No genuine connection-axis EDGE this time (already down) -> no
+      // EmitDisconnected/EmitSyncModeChanged duplicate, but NotifyPushDisabled
+      // is still forced (§11.3: "on every such failure").
+      expect(r.effects, const [
+        CloseCurrentSocket(),
+        ScheduleReconnect(),
+        NotifyPushDisabled(),
+      ]);
+    });
+
+    test(
+        'the very FIRST failure ever (never successfully connected) still '
+        'notifies push-disabled even though there is no push-gate edge '
+        '(§11.3 regression: connectionDown/pushUp start down)', () {
+      // Freshly Started: connectionDown is still true from the initial
+      // default state (Start() never touches it), so pushUp was already
+      // false before this failure -> no edge, yet NotifyPushDisabled MUST
+      // still fire so poll fallback engages.
+      final s = StreamingState(connState: ConnState.started);
+      expect(s.pushUp, isFalse);
+      final r = StreamingPolicy.reduce(s, const SocketError(retryable: true));
+      expect(r.state.connectionDown, isTrue);
+      expect(r.effects, const [
+        CloseCurrentSocket(),
+        ScheduleReconnect(),
+        NotifyPushDisabled(),
+      ]);
     });
 
     test('non-retryable error stops streaming', () {
@@ -202,12 +236,30 @@ void main() {
   });
 
   group('ErrorFrame', () {
-    test('token error invalidates token + reconnects', () {
+    test(
+        'token error is a retryable failure (§11.3): closes the socket, '
+        'drops the connection axis, invalidates the token, reconnects and '
+        'notifies push-disabled', () {
       final s = connected();
       final r = StreamingPolicy.reduce(s, const ErrorFrame(isTokenError: true));
       expect(r.state.reconnecting, isTrue);
       expect(r.state.connState, ConnState.started);
-      expect(r.effects, const [InvalidateToken(), ScheduleReconnect()]);
+      expect(r.state.connectionDown, isTrue);
+      expect(r.state.consecutiveFailures, 1);
+      expect(
+        r.effects,
+        containsAllInOrder(const [
+          CloseCurrentSocket(),
+          InvalidateToken(),
+          ScheduleReconnect(),
+          EmitDisconnected(),
+          NotifyPushDisabled(),
+          EmitSyncModeChanged(
+            to: SyncMode.polling,
+            reason: SyncModeChangeReason.streamingDisconnected,
+          ),
+        ]),
+      );
     });
 
     test('non-token error stops streaming', () {

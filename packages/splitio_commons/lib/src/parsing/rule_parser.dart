@@ -7,8 +7,10 @@ class RuleParser {
   final MatcherParser _matcherParser = MatcherParser();
 
   ParsedSplit? parseSplit(Map<String, dynamic> dto) {
+    // Like the reference SDKs, only ACTIVE rules are kept; ARCHIVED, DELETED
+    // (sent by streaming when a flag is archived) or any other status removes it.
     final status = dto['status'] as String?;
-    if (status == 'ARCHIVED') return null;
+    if (status != null && status != 'ACTIVE') return null;
 
     final name = dto['name'] as String? ?? '';
     final conditions = _parseConditions(dto['conditions'] as List? ?? []);
@@ -36,7 +38,7 @@ class RuleParser {
 
   RuleBasedSegment? parseRuleBasedSegment(Map<String, dynamic> dto) {
     final status = dto['status'] as String?;
-    if (status == 'ARCHIVED') return null;
+    if (status != null && status != 'ACTIVE') return null;
 
     final name = dto['name'] as String? ?? '';
     final conditions = _parseConditions(dto['conditions'] as List? ?? []);

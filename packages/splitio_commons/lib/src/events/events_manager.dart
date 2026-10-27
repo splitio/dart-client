@@ -25,7 +25,7 @@ class EventsManager {
   }
 
   void notifyUpdate(List<String> changedFlags) {
-    if (_disposed) return;
+    if (_disposed || !isReady) return;
     _updates.add(List.unmodifiable(changedFlags));
   }
 

@@ -6,9 +6,13 @@ import '../fetchers/flags_fetcher.dart';
 import '../fetchers/memberships_fetcher.dart';
 import 'clock.dart';
 import 'event_source_client.dart';
+import 'flag_feed_handler.dart';
 import 'flag_update_strategy.dart';
+import 'membership_feed_dispatcher.dart';
 import 'membership_update_strategy.dart';
 import 'notification_processor.dart';
+import 'on_demand_fetch_coordinator.dart';
+import 'segment_update_coordinator.dart';
 import 'streaming_event.dart';
 import 'sync_delay_calculator.dart';
 
@@ -24,35 +28,76 @@ import 'sync_delay_calculator.dart';
 /// fetches are fire-and-forget with swallowed errors so a bad update never kills
 /// streaming.
 class FeedUpdateRouter {
-  final FlagsFetcher _flagsFetcher;
-  final MembershipsFetcher _membershipsFetcher;
-  final FlagUpdateStrategy _flagStrategy;
-  final MembershipUpdateStrategy _membershipStrategy;
-  final SyncDelayCalculator _syncDelayCalculator;
-  final Scheduler _scheduler;
-  final List<String> Function() _matchingKeys;
+  final Future<bool> Function(String segmentName)? _segmentFetcher;
+  final Future<bool> Function()? _allSegmentsFetcher;
+  final SegmentUpdateCoordinator? _segmentCoordinator;
+  final FlagFeedHandler _flagHandler;
+  final MembershipFeedDispatcher _membershipDispatcher;
   final NotificationProcessor _notificationProcessor;
   final Future<void> Function(StreamingEvent event) _apply;
   final SplitLogger _log;
 
-  const FeedUpdateRouter({
+  /// [membershipsFetcher] and [membershipStrategy] are optional: when absent
+  /// (server-side topology, spec §17.2 Axis 3), MEMBERSHIPS_MS/LS_UPDATE frames
+  /// are ignored and catch-up skips the memberships fetch — mirroring
+  /// `javascript-commons` `pushManager.ts`, which only subscribes the membership
+  /// handlers when a `userKey` is bound.
+  ///
+  /// [segmentFetcher] is optional and only wired on server-side topology: it
+  /// takes a segment name and refreshes that single segment's membership store.
+  /// When absent (client-side), `SEGMENT_UPDATE` frames are ignored — the
+  /// symmetric partner of MEMBERSHIPS_* being ignored on server-side.
+  ///
+  /// [allSegmentsFetcher] is optional and only wired on server-side topology
+  /// (reusing `SegmentChangesFetcher.fetch`, which refreshes every registered
+  /// segment): on catch-up (§11.3), it runs AFTER the flags fetch completes,
+  /// mirroring `javascript-commons`'s `pollingManager.syncAll()`
+  /// (`definitionsSyncTask.execute().then(() => segmentsSyncTask.execute())`).
+  /// Without it, server-side segment stores would stay stale while push is
+  /// up, since `SyncManager.onStreamingUp()` cancels the segments poll
+  /// timer for the duration.
+  /// [ffCoordinator]/[rbsCoordinator]/[segmentCoordinator] are optional
+  /// (spec §10.2): when present, they replace the single unconditional
+  /// fetch a fetch-required flag/RBS/segment notification would otherwise
+  /// trigger with a retry+backoff+CDN-bypass chase to the notified
+  /// `changeNumber`. [segmentCoordinator] is tried before [segmentFetcher]
+  /// for `SEGMENT_UPDATE`; [segmentFetcher] remains the fallback (and the
+  /// only path on client-side / when no coordinator is wired).
+  FeedUpdateRouter({
     required FlagsFetcher flagsFetcher,
-    required MembershipsFetcher membershipsFetcher,
+    MembershipsFetcher? membershipsFetcher,
+    Future<bool> Function(String segmentName)? segmentFetcher,
+    Future<bool> Function()? allSegmentsFetcher,
+    SegmentUpdateCoordinator? segmentCoordinator,
+    OnDemandFetchCoordinator? ffCoordinator,
+    OnDemandFetchCoordinator? rbsCoordinator,
     required FlagUpdateStrategy flagStrategy,
-    required MembershipUpdateStrategy membershipStrategy,
+    MembershipUpdateStrategy? membershipStrategy,
     required SyncDelayCalculator syncDelayCalculator,
     required Scheduler scheduler,
     required List<String> Function() matchingKeys,
     required NotificationProcessor notificationProcessor,
     required Future<void> Function(StreamingEvent event) apply,
     required SplitLogger logger,
-  })  : _flagsFetcher = flagsFetcher,
-        _membershipsFetcher = membershipsFetcher,
-        _flagStrategy = flagStrategy,
-        _membershipStrategy = membershipStrategy,
-        _syncDelayCalculator = syncDelayCalculator,
-        _scheduler = scheduler,
-        _matchingKeys = matchingKeys,
+  })  : _segmentFetcher = segmentFetcher,
+        _allSegmentsFetcher = allSegmentsFetcher,
+        _segmentCoordinator = segmentCoordinator,
+        _flagHandler = FlagFeedHandler(
+          flagsFetcher: flagsFetcher,
+          flagStrategy: flagStrategy,
+          allSegmentsFetcher: allSegmentsFetcher,
+          ffCoordinator: ffCoordinator,
+          rbsCoordinator: rbsCoordinator,
+          logger: logger,
+        ),
+        _membershipDispatcher = MembershipFeedDispatcher(
+          membershipsFetcher: membershipsFetcher,
+          membershipStrategy: membershipStrategy,
+          syncDelayCalculator: syncDelayCalculator,
+          scheduler: scheduler,
+          matchingKeys: matchingKeys,
+          logger: logger,
+        ),
         _notificationProcessor = notificationProcessor,
         _apply = apply,
         _log = logger;
@@ -91,113 +136,91 @@ class FeedUpdateRouter {
   }
 
   /// Catch-up fetch on (re)connect/recovery (the FSM `Fetch` effect, §11.3):
-  /// refresh rules and memberships. Fire-and-forget; errors are swallowed.
+  /// refresh rules, then (client-side) memberships and/or (server-side, when
+  /// [_allSegmentsFetcher] is wired) every tracked segment. Fire-and-forget;
+  /// errors are swallowed. On server-side the memberships fetcher is absent,
+  /// so [_membershipDispatcher.catchUp] is a no-op there; symmetrically,
+  /// client-side has no [_allSegmentsFetcher].
+  ///
+  /// The segments fetch runs sequentially AFTER flags completes (not
+  /// concurrently) — mirroring `javascript-commons`'s
+  /// `pollingManager.syncAll()` — because segments newly referenced by rules
+  /// fetched during this same catch-up must already be registered before
+  /// they can be fetched.
   void catchUp() {
-    _log.debug('StreamingManager: catch-up fetch (rules + memberships)');
-    unawaited(_flagsFetcher.fetch().catchError((Object e) {
-      _log.warning('StreamingManager: catch-up flags fetch failed: $e');
-      return false;
-    }));
-    unawaited(_membershipsFetcher.fetch().catchError((Object e) {
-      _log.warning('StreamingManager: catch-up memberships fetch failed: $e');
-      return false;
-    }));
+    final allSegmentsFetcher = _allSegmentsFetcher;
+    _log.debug('StreamingManager: catch-up fetch '
+        '(rules'
+        '${_membershipDispatcher.isPresent ? ' + memberships' : ''}'
+        '${allSegmentsFetcher != null ? ' + segments' : ''})');
+    final flagsDone = _flagHandler.fetchFlags();
+    if (allSegmentsFetcher != null) {
+      unawaited(
+          flagsDone.then((_) => allSegmentsFetcher().catchError((Object e) {
+                _log.warning(
+                    'StreamingManager: catch-up segments fetch failed: $e');
+                return false;
+              })));
+    } else {
+      unawaited(flagsDone);
+    }
+    _membershipDispatcher.catchUp();
   }
 
   void route(FeedUpdate update) {
     try {
       if (update.type.startsWith('SPLIT_') ||
           update.type == 'RB_SEGMENT_UPDATE') {
-        _routeFlagUpdate(update);
+        _flagHandler.route(update);
       } else if (update.type.startsWith('MEMBERSHIPS_')) {
-        _routeMembershipUpdate(update);
+        _membershipDispatcher.route(update);
+      } else if (update.type == 'SEGMENT_UPDATE') {
+        _routeSegmentUpdate(update);
       }
     } catch (e) {
       _log.warning('StreamingManager: feed update routing failed: $e');
     }
   }
 
-  void _routeFlagUpdate(FeedUpdate update) {
-    // RB_SEGMENT_UPDATE: FlagUpdateStrategy (task 4.4) only applies SPLIT_UPDATE
-    // and SPLIT_KILL in place; every other type — including RB_SEGMENT_UPDATE —
-    // hits its default branch and returns fetchRequired. In-place RBS apply
-    // (decompression + rule-based-segment store mutation) is DEFERRED to a later
-    // increment, so a full /splitChanges fetch is the correct safe fallback for
-    // now. We short-circuit here rather than round-tripping through the strategy
-    // to make the "always fetch" contract explicit at the routing layer.
-    if (update.type == 'RB_SEGMENT_UPDATE') {
-      _log.debug('StreamingManager: ${update.type} → full flags fetch');
-      unawaited(_safeFlagsFetch());
+  /// Server-side segment membership update: refresh the named segment via the
+  /// injected [_segmentCoordinator] (preferred, spec §10.2 retry/backoff/
+  /// CDN-bypass) or [_segmentFetcher] (plain single fetch, used when no
+  /// coordinator is wired or the payload carries no int `changeNumber`).
+  /// In-place apply is intentionally not attempted — the notification carries
+  /// no membership delta, only a change-number bump signalling the SDK to
+  /// fetch. Ignored on client-side topology (neither is wired).
+  void _routeSegmentUpdate(FeedUpdate update) {
+    final name = update.payload['segmentName'];
+    if (name is! String || name.isEmpty) {
+      _log.warning('StreamingManager: SEGMENT_UPDATE missing segmentName');
       return;
     }
-    final result = _flagStrategy.handle(update);
-    _log.debug('StreamingManager: ${update.type} → ${result.outcome.name}');
-    if (result.outcome == FlagUpdateOutcome.fetchRequired) {
-      unawaited(_safeFlagsFetch());
-    }
-  }
-
-  Future<void> _safeFlagsFetch() =>
-      _flagsFetcher.fetch().catchError((Object e) {
-        _log.warning('StreamingManager: flags fetch failed: $e');
-        return false;
-      });
-
-  void _routeMembershipUpdate(FeedUpdate update) {
-    final keys = _matchingKeys();
-    for (final key in keys) {
-      final result = _membershipStrategy.handle(update, key);
-      if (!result.fetchRequired) {
-        _log.verbose('StreamingManager: ${update.type} for "$key" → no fetch');
-        continue;
-      }
-      _log.debug('StreamingManager: ${update.type} for "$key" → fetch');
-      _scheduleMembershipFetch(update, key);
-    }
-  }
-
-  /// Schedules the per-key membership fetch, applying seed-based jitter only for
-  /// UNBOUNDED/BOUNDED fetch notifications (§12.3); other fetch fallbacks run
-  /// immediately.
-  void _scheduleMembershipFetch(FeedUpdate update, String key) {
-    final payload = update.payload;
-    final u = payload['u'];
-    final strategy = _strategyFor(u);
-    final delayMs = _syncDelayCalculator.delayMs(
-      matchingKey: key,
-      strategy: strategy,
-      i: payload['i'] is int ? payload['i'] as int : null,
-      h: payload['h'] is int
-          ? payload['h'] as int
-          : HashingAlgorithm.murmur3_32,
-      s: payload['s'] is int ? payload['s'] as int : null,
-    );
-    if (delayMs <= 0) {
-      unawaited(_safeMembershipsFetch(key));
+    final coordinator = _segmentCoordinator;
+    final changeNumber = update.payload['changeNumber'];
+    if (coordinator != null && changeNumber is int) {
+      _log.debug('StreamingManager: SEGMENT_UPDATE for "$name" → on-demand '
+          'fetch coordinator (cn=$changeNumber)');
+      coordinator.notify(name, changeNumber);
       return;
     }
-    _scheduler.schedule(
-      Duration(milliseconds: delayMs),
-      () => unawaited(_safeMembershipsFetch(key)),
-    );
-  }
-
-  MembershipStrategy _strategyFor(Object? u) {
-    switch (u) {
-      case 0:
-        return MembershipStrategy.unbounded;
-      case 1:
-        return MembershipStrategy.bounded;
-      case 2:
-        return MembershipStrategy.keyList;
-      default:
-        return MembershipStrategy.segmentRemoval;
+    final fetcher = _segmentFetcher;
+    if (fetcher == null) {
+      _log.verbose('StreamingManager: SEGMENT_UPDATE ignored '
+          '(no segment fetcher — client-side topology)');
+      return;
     }
+    _log.debug('StreamingManager: SEGMENT_UPDATE for "$name" → fetch');
+    unawaited(fetcher(name).catchError((Object e) {
+      _log.warning('StreamingManager: segment fetch for "$name" failed: $e');
+      return false;
+    }));
   }
 
-  Future<void> _safeMembershipsFetch(String key) =>
-      _membershipsFetcher.fetchForKey(key).catchError((Object e) {
-        _log.warning('StreamingManager: memberships fetch failed: $e');
-        return false;
-      });
+  /// Cancels every on-demand coordinator's pending retry timer. MUST be
+  /// called by [StreamingManager] on `stop()`/destroy so no timer outlives it
+  /// (Factory Lifecycle Rules).
+  void dispose() {
+    _flagHandler.dispose();
+    _segmentCoordinator?.dispose();
+  }
 }

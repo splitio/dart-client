@@ -1,11 +1,16 @@
 import 'package:splitio_commons/src/core/core.dart';
+import 'package:splitio_commons/src/logger/logger.dart';
 
 class StubEvaluationContext implements EvaluationContext {
   final Map<String, EvaluationResult> evaluations;
   final Set<String> segments;
   final Set<String> ruleBasedSegments;
 
+  @override
+  final SplitLogger? logger;
+
   StubEvaluationContext({
+    this.logger,
     this.evaluations = const {},
     this.segments = const {},
     this.ruleBasedSegments = const {},
@@ -45,11 +50,13 @@ MatchingContext defaultCtx({
   String bucketingKey = 'user1',
   Map<String, Object?> attributes = const {},
   EvaluationContext? evaluator,
+  SplitLogger? logger,
 }) {
   return MatchingContext(
     matchingKey: matchingKey,
     bucketingKey: bucketingKey,
     attributes: attributes,
     evaluator: evaluator ?? StubEvaluationContext(),
+    logger: logger,
   );
 }

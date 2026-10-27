@@ -9,6 +9,8 @@ environment:
 dependencies:
   splitio_client_side:
     path: ../splitio_client_side
+  splitio_server_side:
+    path: ../splitio_server_side
 
 dev_dependencies:
   test: ^1.24.0

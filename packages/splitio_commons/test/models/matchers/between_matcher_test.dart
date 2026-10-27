@@ -37,6 +37,15 @@ void main() {
         expect(matcher.match(true, defaultCtx()), isFalse);
       });
 
+      test('matches a fractional double inside the range', () {
+        expect(matcher.match(18.5, defaultCtx()), isTrue);
+      });
+
+      test('does not match a fractional double outside the range', () {
+        expect(matcher.match(20.5, defaultCtx()), isFalse);
+        expect(matcher.match(9.9, defaultCtx()), isFalse);
+      });
+
       test('handles negative ranges', () {
         const negativeMatcher =
             BetweenMatcher(start: -20, end: -10, dataType: DataType.number);
@@ -72,6 +81,12 @@ void main() {
       test('returns false for invalid datetime values', () {
         expect(matcher.match(null, defaultCtx()), isFalse);
         expect(matcher.match('invalid', defaultCtx()), isFalse);
+      });
+
+      test('matches when the runtime value is a double of epoch millis', () {
+        final noonAsDouble =
+            DateTime.utc(2024, 1, 15, 12, 0).millisecondsSinceEpoch.toDouble();
+        expect(matcher.match(noonAsDouble, defaultCtx()), isTrue);
       });
     });
   });

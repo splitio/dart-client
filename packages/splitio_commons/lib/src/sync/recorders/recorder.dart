@@ -19,6 +19,14 @@ abstract class Recorder {
 
   Future<void> flush();
 
+  /// Drops any batch retained for a retry by this recorder's
+  /// `BatchSubmitter` (spec §7.2: consent DECLINED MUST drop queued data,
+  /// including data already in flight for a retry — not just the live
+  /// store). Subclasses that own a `BatchSubmitter` MUST override this to
+  /// forward to its `clear()`. Default no-op for recorders with nothing to
+  /// retain.
+  void clearRetained() {}
+
   bool get isRunning => _timer != null;
 
   void start() {

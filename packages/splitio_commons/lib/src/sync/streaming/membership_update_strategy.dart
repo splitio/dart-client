@@ -1,7 +1,7 @@
-import 'dart:convert';
-
+import 'package:splitio_commons/src/logger/logger.dart';
 import 'package:splitio_commons/src/storage/storage.dart';
 
+import '../compression/notification_payload_decoder.dart';
 import 'membership_payload_decoder.dart';
 import 'notification_processor.dart';
 
@@ -9,15 +9,19 @@ import 'notification_processor.dart';
 ///
 /// [fetchRequired] means the caller (StreamingManager, task 4.7) MUST trigger an
 /// **unbounded** full memberships fetch for the user key — either because the
-/// strategy mandates it, decompression is deferred, or in-place apply was not
-/// safe. [didApplyInPlace] records whether the store was mutated directly.
+/// strategy mandates it, the payload could not be decoded, or in-place apply
+/// was not safe. [didApplyInPlace] records whether the store was mutated directly.
+/// [changed] records whether that in-place apply actually added or removed a
+/// key from the store (used to drive `whenUpdated()`, spec §4.6/§8.2).
 class MembershipUpdateResult {
   final bool fetchRequired;
   final bool didApplyInPlace;
+  final bool changed;
 
   const MembershipUpdateResult({
     required this.fetchRequired,
     required this.didApplyInPlace,
+    this.changed = false,
   });
 
   static const MembershipUpdateResult _fetch = MembershipUpdateResult(
@@ -30,10 +34,12 @@ class MembershipUpdateResult {
     didApplyInPlace: false,
   );
 
-  static const MembershipUpdateResult _applied = MembershipUpdateResult(
-    fetchRequired: false,
-    didApplyInPlace: true,
-  );
+  factory MembershipUpdateResult._applied(bool changed) =>
+      MembershipUpdateResult(
+        fetchRequired: false,
+        didApplyInPlace: true,
+        changed: changed,
+      );
 }
 
 /// Membership-side instant-update strategies for `MEMBERSHIPS_MS_UPDATE` and
@@ -53,19 +59,29 @@ class MembershipUpdateResult {
 /// edits its **largeSegments**. The other locus is preserved on every in-place
 /// apply (the store tracks the two sets separately).
 ///
-/// Decompression is DEFERRED (mirrors the flag-side deferral): only `c == 0`
-/// (base64-only) payloads are handled in place. BOUNDED always falls back to an
-/// unbounded fetch (the bitmap needs gzip/zlib we can't yet inflate); KEY_LIST
-/// with `c != 0` also falls back.
+/// `d` is decoded through [NotificationPayloadDecoder] (`c` 0 NONE / 1 GZIP /
+/// 2 ZLIB). BOUNDED fetches only when the key's bit is set in the bitmap;
+/// KEY_LIST is applied in place. A decode error on a non-empty `d` falls back
+/// to an unbounded fetch and is logged at WARNING once per notification (the
+/// dispatcher calls [handle] once per bound key with the same [FeedUpdate]).
 class MembershipUpdateStrategy {
   final MembershipStore _store;
   final MembershipPayloadDecoder _decoder;
+  final NotificationPayloadDecoder _payloadDecoder;
+  final SplitLogger? _logger;
+
+  /// The last [FeedUpdate] whose decode failure was logged (by identity).
+  FeedUpdate? _lastLoggedFailure;
 
   MembershipUpdateStrategy({
     required MembershipStore store,
     required MembershipPayloadDecoder decoder,
-  })  : _store = store,
-        _decoder = decoder;
+    NotificationPayloadDecoder? payloadDecoder,
+    SplitLogger? logger,
+  })  : _logger = logger,
+        _store = store,
+        _decoder = decoder,
+        _payloadDecoder = payloadDecoder ?? const NotificationPayloadDecoder();
 
   /// Handles a membership-side [update] for the bound [matchingKey], mutating
   /// the store in place when safe and returning whether an unbounded fetch is
@@ -82,13 +98,9 @@ class MembershipUpdateStrategy {
         case 0: // UNBOUNDED_FETCH_REQUEST
           return MembershipUpdateResult._fetch;
         case 1: // BOUNDED_FETCH_REQUEST
-          // TODO(streaming): once the Decompressor SPI lands, decode `d`,
-          // compute isInBitmap(hashKeyLow32(key), keyMap) and fetch only when
-          // the user's bit is set. Until then we always fall back to unbounded
-          // fetch (the safe default per §12.2).
-          return MembershipUpdateResult._fetch;
+          return _handleBounded(update, matchingKey);
         case 2: // KEY_LIST
-          return _handleKeyList(payload, matchingKey, isLarge);
+          return _handleKeyList(update, matchingKey, isLarge);
         case 3: // SEGMENT_REMOVAL
           return _handleSegmentRemoval(payload, matchingKey, isLarge);
         default:
@@ -99,18 +111,42 @@ class MembershipUpdateStrategy {
     }
   }
 
+  /// BOUNDED_FETCH_REQUEST: fetch only when the key's bit is set in the
+  /// (decompressed) bitmap; an absent `d` or a decode error falls back to an
+  /// unbounded fetch.
+  MembershipUpdateResult _handleBounded(FeedUpdate update, String matchingKey) {
+    final payload = update.payload;
+    final d = payload['d'];
+    if (d is! String || d.isEmpty) return MembershipUpdateResult._fetch;
+
+    final List<int> keyMap;
+    try {
+      keyMap = _payloadDecoder.bytes(payload['c'], d);
+    } catch (e) {
+      _logDecodeFailure(update, 'BoundedFetchRequest', e);
+      return MembershipUpdateResult._fetch;
+    }
+    return _decoder.isInBitmap(_decoder.hashKeyLow32(matchingKey), keyMap)
+        ? MembershipUpdateResult._fetch
+        : MembershipUpdateResult._noop;
+  }
+
   MembershipUpdateResult _handleKeyList(
-    Map<String, dynamic> payload,
+    FeedUpdate update,
     String matchingKey,
     bool isLarge,
   ) {
-    final c = payload['c'];
+    final payload = update.payload;
     final d = payload['d'];
-    // Decompression deferred: only base64-only (c == 0) payloads in place.
-    if (c != 0 || d is! String) return MembershipUpdateResult._fetch;
+    if (d is! String || d.isEmpty) return MembershipUpdateResult._fetch;
 
-    final jsonText = utf8.decode(base64.decode(d));
-    final keyList = _decoder.parseKeyList(jsonText);
+    final ({List<String> a, List<String> r}) keyList;
+    try {
+      keyList = _decoder.parseKeyList(_payloadDecoder.text(payload['c'], d));
+    } catch (e) {
+      _logDecodeFailure(update, 'KeyList', e);
+      return MembershipUpdateResult._fetch;
+    }
     final action = _decoder.resolveKeyListAction(
       _decoder.hashKeyDecimal(matchingKey),
       a: keyList.a,
@@ -128,6 +164,14 @@ class MembershipUpdateStrategy {
       case KeyListAction.none:
         return MembershipUpdateResult._noop;
     }
+  }
+
+  /// Logs the decode failure of [update] once per notification (identity).
+  void _logDecodeFailure(FeedUpdate update, String kind, Object error) {
+    if (identical(_lastLoggedFailure, update)) return;
+    _lastLoggedFailure = update;
+    _logger?.warning('Fetching Memberships due to an error processing $kind '
+        'notification: $error');
   }
 
   MembershipUpdateResult _handleSegmentRemoval(
@@ -163,7 +207,7 @@ class MembershipUpdateStrategy {
     final cn = payload['cn'];
     final changeNumber = cn is int ? cn : _store.changeNumber(matchingKey);
 
-    _store.applyMembership(
+    final changed = _store.applyMembership(
       matchingKey,
       MembershipChange(
         changeNumber: changeNumber,
@@ -171,7 +215,7 @@ class MembershipUpdateStrategy {
         largeSegments: ls,
       ),
     );
-    return MembershipUpdateResult._applied;
+    return MembershipUpdateResult._applied(changed);
   }
 
   static List<String> _names(Map<String, dynamic> payload) {

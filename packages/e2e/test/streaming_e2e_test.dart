@@ -85,10 +85,7 @@ void main() {
       final key = Key(matchingKey: 'user_a');
       final factory = SplitFactory.create('fake-api-key', config, key);
 
-      await factory
-          .client(key)
-          .whenReady()
-          .timeout(const Duration(seconds: 5));
+      await factory.client(key).whenReady().timeout(const Duration(seconds: 5));
 
       // Streaming starts AFTER the initial fetch and is fire-and-forget so it
       // MUST NOT delay readiness (§8.1/§8.2). Give the background auth + SSE
@@ -131,12 +128,14 @@ void main() {
       backend.stubMemberships();
       backend.stubAuth();
       // Simulate a connection that never establishes: every SSE connect returns
-      // a transient 5xx (spec §10.3 → retryable). Two consecutive failures with
-      // no successful open drop the connection axis (connectionDown) → the FSM
-      // notifies push-disabled and SyncManager (re)starts polling (§8.4). The
-      // FSM keeps scheduling backed-off reconnects, so the observable HTTP
-      // signature of the fallback machinery is repeated SSE connect attempts
-      // after the first drop.
+      // a transient 5xx (spec §10.3 → retryable). Every retryable failure drops
+      // the connection axis (connectionDown) unconditionally, including the
+      // very first one (the old ">=2 consecutive failures" threshold is
+      // removed, §11.3) — the FSM notifies push-disabled and SyncManager
+      // (re)starts polling (§8.4) right away. The FSM keeps scheduling
+      // backed-off reconnects, so the observable HTTP signature of the
+      // fallback machinery is repeated SSE connect attempts after the first
+      // drop.
       backend.stubStreamingStatus(500);
 
       final baseUrl = _baseUrl(backend);
@@ -157,18 +156,18 @@ void main() {
       final key = Key(matchingKey: 'user_a');
       final factory = SplitFactory.create('fake-api-key', config, key);
 
-      await factory
-          .client(key)
-          .whenReady()
-          .timeout(const Duration(seconds: 5));
+      await factory.client(key).whenReady().timeout(const Duration(seconds: 5));
 
       // The SSE connection MUST be (re)attempted after the initial failure.
       // This verifies retry-on-transient-failure: the SDK MUST NOT give up
       // streaming after a single 5xx (backoff base is 1s, so >1 attempt lands
       // comfortably inside the window). Poll fallback (§8.4) is also triggered
-      // internally when the connection axis drops, but the polling floor is
-      // ~30s, so it is NOT HTTP-observable within this test window — repeated
-      // SSE connect attempts are the honest observable here.
+      // internally on this very first failure (connectionDown drops
+      // unconditionally, §11.3), but the polling floor here is ~9999s, so an
+      // extra /splitChanges request is NOT HTTP-observable within this test
+      // window — repeated SSE connect attempts are the honest observable
+      // here. `streaming_poll_fallback_e2e_test.dart` covers the
+      // HTTP-observable polling side with a realistic 30s floor.
       expect(
           await _until(() => backend.streamingRequests.length > 1,
               timeout: const Duration(seconds: 8)),
@@ -211,10 +210,7 @@ void main() {
       final key = Key(matchingKey: 'user_a');
       final factory = SplitFactory.create('fake-api-key', config, key);
 
-      await factory
-          .client(key)
-          .whenReady()
-          .timeout(const Duration(seconds: 5));
+      await factory.client(key).whenReady().timeout(const Duration(seconds: 5));
 
       // First auth fires, SSE connect gets 401, token invalidated, reconnect
       // pulls a fresh credential → a SECOND /v2/auth request.
@@ -268,10 +264,7 @@ void main() {
       final key = Key(matchingKey: 'user_a');
       final factory = SplitFactory.create('fake-api-key', config, key);
 
-      await factory
-          .client(key)
-          .whenReady()
-          .timeout(const Duration(seconds: 5));
+      await factory.client(key).whenReady().timeout(const Duration(seconds: 5));
 
       // First auth + SSE connect happen on start.
       expect(await _until(() => backend.streamingRequests.isNotEmpty), isTrue,

@@ -39,6 +39,13 @@ void main() {
         expect(result, isNull);
       });
 
+      test('returns null for DELETED status (streaming archive payload)', () {
+        final dto = _completeSplitDto();
+        dto['status'] = 'DELETED';
+
+        expect(parser.parseSplit(dto), isNull);
+      });
+
       test('parses configurations map', () {
         final dto = _completeSplitDto();
         dto['configurations'] = {'on': '{"color":"red"}', 'off': '{}'};
@@ -1031,6 +1038,23 @@ void main() {
         expect(result.rbsTill, 200);
         expect(rbsStore.get('rbs_employees'), isNotNull);
         expect(rbsStore.changeNumber(), 200);
+        // whenUpdated() wiring (spec §4.6/§8.2, BUG #12): an rbs-only
+        // change (no flags changed) MUST still be reported as a change,
+        // with an empty changedFlags list — FlagsFetcher relies on
+        // rbsChanged to decide whether to fire onUpdate.
+        expect(result.rbsChanged, isTrue);
+        expect(result.changedFlags, isEmpty);
+      });
+
+      test('rbsChanged is false when the rbs payload carries no segments', () {
+        final response = <String, dynamic>{
+          'ff': {'t': -1, 's': -1, 'd': []},
+          'rbs': {'t': -1, 's': -1, 'd': []},
+        };
+
+        final result = processor.processTargetingRules(response);
+
+        expect(result.rbsChanged, isFalse);
       });
 
       test('does not advance cursor when till is not greater than current', () {
@@ -1082,6 +1106,114 @@ void main() {
         expect(ruleStore.get('archived_flag'), isNull);
         expect(
             result.changedFlags, containsAll(['active_flag', 'archived_flag']));
+      });
+    });
+
+    group('stale responses', () {
+      Map<String, dynamic> rbsDto(String name, int cn) => {
+            'name': name,
+            'status': 'ACTIVE',
+            'changeNumber': cn,
+            'conditions': <Map<String, dynamic>>[],
+          };
+
+      Map<String, dynamic> ffResponse(int t, List<Map<String, dynamic>> d) => {
+            'ff': {'t': t, 's': -1, 'd': d},
+            'rbs': {'t': -1, 's': -1, 'd': []},
+          };
+
+      test('ignores an ff section whose t is below the stored cursor', () {
+        processor.processTargetingRules(ffResponse(200, [_completeSplitDto()]));
+        final stale = _completeSplitDto();
+        stale['killed'] = true;
+        stale['changeNumber'] = 100;
+
+        final result =
+            processor.processTargetingRules(ffResponse(100, [stale]));
+
+        expect(ruleStore.changeNumber(), 200);
+        expect(ruleStore.get('my_flag')!.killed, isFalse);
+        expect(result.changedFlags, isEmpty);
+        expect(result.ffTill, 200);
+      });
+
+      test('ignores an rbs section whose t is below the stored cursor', () {
+        processor.processTargetingRules({
+          'ff': {'t': -1, 's': -1, 'd': []},
+          'rbs': {
+            't': 200,
+            's': -1,
+            'd': [rbsDto('seg', 200)]
+          },
+        });
+
+        final result = processor.processTargetingRules({
+          'ff': {'t': -1, 's': -1, 'd': []},
+          'rbs': {
+            't': 100,
+            's': -1,
+            'd': [rbsDto('seg', 100), rbsDto('other', 100)]
+          },
+        });
+
+        expect(rbsStore.changeNumber(), 200);
+        expect(rbsStore.get('seg')!.changeNumber, 200);
+        expect(rbsStore.get('other'), isNull);
+        expect(result.rbsChanged, isFalse);
+        expect(result.rbsTill, 200);
+      });
+
+      test('discarding a stale ff section does not affect the rbs section', () {
+        processor.processTargetingRules(ffResponse(200, [_completeSplitDto()]));
+
+        final result = processor.processTargetingRules({
+          'ff': {
+            't': 100,
+            's': -1,
+            'd': [_completeSplitDto()]
+          },
+          'rbs': {
+            't': 50,
+            's': -1,
+            'd': [rbsDto('seg', 50)]
+          },
+        });
+
+        expect(ruleStore.changeNumber(), 200);
+        expect(result.changedFlags, isEmpty);
+        expect(rbsStore.changeNumber(), 50);
+        expect(rbsStore.get('seg'), isNotNull);
+        expect(result.rbsChanged, isTrue);
+      });
+
+      test('still applies an ff section whose t equals the stored cursor', () {
+        processor.processTargetingRules(ffResponse(200, [_completeSplitDto()]));
+        final same = _completeSplitDto();
+        same['killed'] = true;
+
+        final result = processor.processTargetingRules(ffResponse(200, [same]));
+
+        expect(ruleStore.changeNumber(), 200);
+        expect(ruleStore.get('my_flag')!.killed, isTrue);
+        expect(result.changedFlags, ['my_flag']);
+      });
+
+      test('still applies an rbs section whose t equals the stored cursor', () {
+        Map<String, dynamic> rbsResponse(Map<String, dynamic> d) => {
+              'ff': {'t': -1, 's': -1, 'd': []},
+              'rbs': {
+                't': 200,
+                's': -1,
+                'd': [d]
+              },
+            };
+        processor.processTargetingRules(rbsResponse(rbsDto('seg', 200)));
+
+        final result =
+            processor.processTargetingRules(rbsResponse(rbsDto('seg2', 200)));
+
+        expect(rbsStore.get('seg2'), isNotNull);
+        expect(result.rbsChanged, isTrue);
       });
     });
 

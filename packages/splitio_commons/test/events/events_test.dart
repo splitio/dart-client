@@ -23,7 +23,9 @@ void main() {
       await expectLater(future, completes);
     });
 
-    test('onReady is latched — subscribing after notifyReady returns a resolved future', () async {
+    test(
+        'onReady is latched — subscribing after notifyReady returns a resolved future',
+        () async {
       manager.notifyReady();
       // subscribe AFTER ready
       await expectLater(manager.onReady, completes);
@@ -48,7 +50,9 @@ void main() {
       await expectLater(future, completes);
     });
 
-    test('onTimeout is latched — subscribing after notifyTimeout returns a resolved future', () async {
+    test(
+        'onTimeout is latched — subscribing after notifyTimeout returns a resolved future',
+        () async {
       manager.notifyTimeout();
       await expectLater(manager.onTimeout, completes);
     });
@@ -68,6 +72,7 @@ void main() {
     // --- onUpdated ---
 
     test('onUpdated emits the changed flag names', () async {
+      manager.notifyReady();
       final received = <List<String>>[];
       final sub = manager.onUpdated.listen(received.add);
 
@@ -80,6 +85,7 @@ void main() {
     });
 
     test('onUpdated fires multiple times (not latched)', () async {
+      manager.notifyReady();
       final received = <List<String>>[];
       final sub = manager.onUpdated.listen(received.add);
 
@@ -92,7 +98,9 @@ void main() {
       await sub.cancel();
     });
 
-    test('onUpdated is broadcast — multiple subscribers each receive events', () async {
+    test('onUpdated is broadcast — multiple subscribers each receive events',
+        () async {
+      manager.notifyReady();
       final a = <List<String>>[];
       final b = <List<String>>[];
       final subA = manager.onUpdated.listen(a.add);
@@ -108,11 +116,32 @@ void main() {
     });
 
     test('onUpdated payload is unmodifiable', () async {
+      manager.notifyReady();
       List<String>? payload;
       final sub = manager.onUpdated.listen((p) => payload = p);
       manager.notifyUpdate(['flag_z']);
       await Future.delayed(Duration.zero);
       expect(() => payload!.add('extra'), throwsUnsupportedError);
+      await sub.cancel();
+    });
+
+    test('onUpdated does not emit before notifyReady (spec §4.6/§8.2)',
+        () async {
+      final received = <List<String>>[];
+      final sub = manager.onUpdated.listen(received.add);
+
+      manager.notifyUpdate(['too_early']);
+      await Future.delayed(Duration.zero);
+
+      expect(received, isEmpty);
+
+      manager.notifyReady();
+      manager.notifyUpdate(['after_ready']);
+      await Future.delayed(Duration.zero);
+
+      expect(received, [
+        ['after_ready']
+      ]);
       await sub.cancel();
     });
 
@@ -156,6 +185,5 @@ void main() {
       await manager.dispose();
       expect(() => manager.notifyUpdate(['x']), returnsNormally);
     });
-
   });
 }

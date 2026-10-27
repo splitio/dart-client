@@ -92,7 +92,8 @@ dart-client/
 │   ├── splitio_commons/      # Shared Split SDK components — domain types, engine, sync, auth, all shared logic
 │   │   └── lib/src/
 │   │       ├── auth/         # Authentication and authorization
-│   │       ├── core/         # Shared utilities (coercion, semver, EvaluationContext, MatchingContext)
+│   │       ├── client/       # Shared client core: TreatmentEvaluator, TreatmentMethods, TrackMethod, ClientState, SplitManager
+│   │       ├── core/         # Shared utilities (coercion, semver, EvaluationContext, MatchingContext, FactoryTracker)
 │   │       ├── engine/       # Targeting engine, bucketing, matcher orchestration
 │   │       ├── event_tracker/# Event tracking
 │   │       ├── events/       # Readiness/lifecycle manager (latched events)
@@ -104,17 +105,21 @@ dart-client/
 │   │       ├── observer/     # Observability (logging, tracing)
 │   │       ├── parsing/      # Data parsing utilities
 │   │       ├── storage/      # Local storage and persistence
-│   │       └── sync/         # Synchronization: polling + streaming (SSE) with pure FSM + effect runtime
+│   │       └── sync/         # Synchronization: shared SyncManager + per-flavor PollingManager (CS/SS), streaming (SSE) FSM, gzip/zlib payload decoding
 │   ├── splitio_client_side/  # Public SDK entry point (CS flavor): single-tenant, streaming sync, per-key SplitClient
 │   │   └── lib/src/
-│   │       ├── client/       # Internal per-key SplitClient/ClientManager building block
-│   │       └── internal/     # Internal DI/wiring root; assembles all layers
-│   └── e2e/                  # End-to-end integration tests
+│   │       ├── client/       # Per-key SplitClientImpl: thin adapter over the commons client core
+│   │       └── internal/     # Internal DI/wiring root; assembles all layers; ClientReadiness (per-client READY/TIMEOUT/UPDATE)
+│   ├── splitio_server_side/  # Public SDK entry point (SS flavor): polling + /segmentChanges sync, SIGTERM/SIGINT auto-flush (Dart VM only)
+│   │   └── lib/src/
+│   │       ├── client/       # ServerSplitClient (key passed per call): thin adapter over the commons client core
+│   │       └── internal/     # ServerDependencyContainer, FlagsSegmentSync, SplitFactory, SignalListener
+│   └── e2e/                  # End-to-end integration tests (client-side and server-side)
 ├── test/                     # Root-level tests (if any)
 └── docs/                     # Documentation
 ```
 
-The monorepo consolidates shared logic into two library packages (`splitio_commons`, `splitio_client_side`) plus `e2e` — not one package per concern. Sub-concerns live as directories under `lib/src/` within these packages.
+The monorepo consolidates shared logic into three library packages (`splitio_commons`, `splitio_client_side`, `splitio_server_side`) plus `e2e` — not one package per concern. Sub-concerns live as directories under `lib/src/` within these packages.
 
 ## Important Packages/Folders
 
@@ -124,7 +129,10 @@ Based on recent activity and architecture:
 |---------|---------|----------|
 | `packages/splitio_client_side` | Public SDK entry point (client-side flavor); the package users install | High |
 | `packages/splitio_client_side/lib/src/internal` | Internal DI/wiring root; assembles all layers | High |
-| `packages/splitio_client_side/lib/src/client` | Internal per-key SplitClient/ClientManager building block | High |
+| `packages/splitio_client_side/lib/src/client` | Per-key `SplitClientImpl`; delegates to the commons client core | High |
+| `packages/splitio_commons/lib/src/client` | Shared client core: evaluation pipeline (`TreatmentEvaluator`), the six `getTreatment*` (`TreatmentMethods`), `TrackMethod` — used by both flavors | High |
+| `packages/splitio_server_side` | Public SDK entry point (server-side flavor); polling sync, signal-driven flush | High |
+| `packages/splitio_server_side/lib/src/internal` | Server DI/wiring root, sync manager, factory lifecycle, `SignalListener` | High |
 | `packages/splitio_commons/lib/src/auth` | Authentication logic; security-critical | High |
 | `packages/splitio_commons/lib/src/core` | Shared utilities: coercion, semver, EvaluationContext, MatchingContext | High |
 | `packages/splitio_commons/lib/src/models` | Data types and polymorphic matchers (each matcher in its own file with `match()`) | High |
@@ -132,7 +140,7 @@ Based on recent activity and architecture:
 | `packages/splitio_commons/lib/src/http_client` | HTTP communication layer | Medium |
 | `packages/splitio_commons/lib/src/storage` | Persistence layer | Medium |
 | `packages/splitio_commons/lib/src/observer` | Observability and logging | Medium |
-| `packages/splitio_commons/lib/src/sync` | Data synchronization: polling + streaming (SSE push, §11-§12) with streaming↔polling fallback | Medium |
+| `packages/splitio_commons/lib/src/sync` | Data synchronization: one flavor-agnostic `SyncManager` with an injected `PollingManagerCS`/`PollingManagerSS`, streaming (SSE push, §11-§12) with streaming↔polling fallback, in-place apply of compressed payloads | Medium |
 | `packages/e2e` | Integration tests | Medium |
 | `packages/splitio_commons/lib/src/parsing` | Data parsing utilities | Low |
 | `packages/splitio_commons/lib/src/impressions` | Impression recording with strategy pattern (debug, optimized, none) | Medium |
@@ -220,6 +228,7 @@ This SDK MUST run on every Dart target with as little platform-specific code as 
 
 Rules that follow from this:
 - **Do not use `dart:io` or `dart:html` directly** in shared packages — they are not available on all targets. Platform-specific I/O MUST be behind an SPI (e.g. `HttpClient`, `StreamingTransport`, `Decompressor` — see spec §6).
+  `splitio_server_side` is the exception: it targets the Dart VM only and uses `dart:io` directly (e.g. `ProcessSignal` in `SignalListener`). Keep `dart:io` out of `splitio_commons` and `splitio_client_side`.
 - **Avoid `BigInt`** on the hot path — it is heap-allocated and slow on Dart-compiled-to-JS (Flutter Web). The spec (§12.3) already mandates string-comparison workarounds where 64-bit integers would otherwise be needed.
 - **New external dependencies MUST be verified to support all targets** before being approved (see External Dependencies below). A dependency that only works on VM or only on Flutter Web is a blocker unless it is explicitly platform-scoped behind an SPI.
 - When writing tests, use `package:test` platform annotations (`@TestOn`) if a test is unavoidably platform-specific.
@@ -238,7 +247,7 @@ The approved external dependencies for this project are defined in `docs/deps.md
 
 ## Public API Stability
 
-The public API surface (defined in `packages/sdk_single` and specified in `docs/SDK-Specification-v1-RFC2119.md` §7) MUST NOT be changed casually. This includes `SplitFactory`, `SplitClient`, `SplitManager`, `SplitView`, `SplitClientConfig`, and all their method signatures and return types.
+The public API surface (exported by `packages/splitio_client_side` and `packages/splitio_server_side`, and specified in `docs/SDK-Specification-v1-RFC2119.md` §7) MUST NOT be changed casually. This includes `SplitFactory`, `SplitClient`, `SplitManager`, `SplitView`, `SplitClientConfig`, and all their method signatures and return types.
 
 If a proposed change — including changes made to simplify e2e testing — requires altering the public API, stop and raise it explicitly with the user before proceeding. Testing convenience is never a sufficient reason to change the API contract.
 
@@ -246,6 +255,31 @@ Acceptable reasons to change the public API:
 - The spec explicitly requires it
 - A confirmed bug in the spec or API design, agreed with the user
 - A deliberate, user-approved design revision
+
+## Factory Lifecycle Rules
+
+Learned from PR #40 review; applies to both `SplitFactory` implementations:
+
+- **Every Timer, subscription, or watcher a factory creates MUST be cancelled in `destroy()`.** Don't use untracked `Future.delayed` for timeouts — keep a `Timer` field and cancel it.
+- **`readyTimeout` starts at factory creation** (spec §8.2), not after the initial sync, and is cancelled on READY and on destroy.
+- **Fire-and-forget startup (`Future(() async { ... })`) MUST wrap its body in `try/catch`** and log via the SDK logger — no error may escape the SDK. After every `await`, check `_factoryDestroyed` before starting polling/streaming/recorders.
+- **`ProcessSignal.watch()` subscriptions suppress the signal's default action** while alive. A leaked one makes Ctrl+C / `kill` stop terminating the process, so `SignalListener.dispose()` MUST cancel every underlying watcher.
+- **Check parity with the JS SDK** (`javascript-commons`) when a review questions lifecycle or sync design; it is the production reference implementation.
+- **Per-client state is owned by `ClientReadiness`** (client-side). Its timers and per-client `EventsManager`s MUST be disposed in factory `destroy()`; destroying a single client only unregisters that client.
+
+## Behavior Parity & Flavor Differences
+
+The JS SDKs are the behavioral reference: **Browser SDK** (`javascript-browser-client`) for client-side, **Node.js SDK** (`javascript-client`) for server-side, both built on `javascript-commons`. When the spec is silent or a validation run disagrees with Dart, check the JS source before deciding, and record the decision in the spec.
+
+Settled decisions that are easy to get wrong:
+- **Client-side readiness is per client** (`ClientReadiness`). READY = rules synced **and** that client's own memberships synced. Membership UPDATEs go only to clients with the affected matching key; flag/kill/RBS UPDATEs go to every client. Tests that evaluate on a fresh `factory.client(otherKey)` MUST `await whenReady()` first.
+- **Evaluating before READY** returns `control` (or the configured fallback) **and records an impression labeled `not ready`** (JS `sdkClient/client.ts`).
+- **Never throw from the public API.** An invalid `factory.client(key)` logs an ERROR and returns a NoOp client (the browser SDK throws; Dart deliberately does not, spec §16). A `num` key logs a warning and becomes a `String`.
+- **Rate minimums are server-side only.** `SyncConfig.normalized(serverSide: true)` clamps to 30 s and warns. The client-side flavor MUST call `normalized(serverSide: false)` (positive values are kept, non-positive values fall back to defaults).
+- **`logLevel` defaults to `none`** in both flavors. Tests that assert on log output MUST set a level explicitly.
+- **Log levels follow JS:** every failed data fetch logs at ERROR; invalid flag names in a list log at ERROR; coerced or extra (>300) track properties log a WARNING and the event is still tracked.
+- **Live factories are counted per SDK key** (`FactoryTracker`). Each real factory calls `track` on create and `release` once in teardown; NoOp factories are not tracked.
+- **SDK version strings belong to each flavor, never commons.** `splitio_client_side/lib/src/version.dart` (`dart_st-…`) and `splitio_server_side/lib/src/version.dart` (`dart_mt-…`) are passed into commons via the required `sdkVersion` parameter of `SplitHttpClient`/`ImpressionsManager`; they are not exported. Both files, and the flavors' `splitio_commons: ^…` constraint, are generated from the pubspec versions by `scripts/sync_sdk_versions.dart` (`melos run sync-versions`, also run by the pre-commit hook). On release only edit each pubspec `version:` and the CHANGELOG; never hand-edit `version.dart`. `test/version_test.dart` in each flavor is the backstop if the script is skipped.
 
 ## Class Size Limits
 

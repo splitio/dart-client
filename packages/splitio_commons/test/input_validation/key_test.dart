@@ -37,22 +37,56 @@ void main() {
       expect(r.isValid, isFalse);
     });
 
-    test('rejects matchingKey > 1024 chars', () {
-      final r = validateKey(Key(matchingKey: 'a' * 1025), 'getTreatment');
+    test('rejects matchingKey > 250 chars', () {
+      final r = validateKey(Key(matchingKey: 'a' * 251), 'getTreatment');
       expect(r.isValid, isFalse);
     });
 
-    test('accepts matchingKey exactly 1024 chars', () {
-      final r = validateKey(Key(matchingKey: 'a' * 1024), 'getTreatment');
+    test('accepts matchingKey exactly 250 chars', () {
+      final r = validateKey(Key(matchingKey: 'a' * 250), 'getTreatment');
       expect(r.isValid, isTrue);
     });
 
-    test('rejects bucketingKey > 1024 chars', () {
+    test('rejects bucketingKey > 250 chars', () {
       final r = validateKey(
-        Key(matchingKey: 'user_a', bucketingKey: 'b' * 1025),
+        Key(matchingKey: 'user_a', bucketingKey: 'b' * 251),
         'getTreatment',
       );
       expect(r.isValid, isFalse);
+    });
+
+    test('trims surrounding whitespace from matchingKey and bucketingKey', () {
+      final r = validateKey(
+        const Key(matchingKey: ' user_a ', bucketingKey: ' bucket_1 '),
+        'getTreatment',
+      );
+      expect(r.isValid, isTrue);
+      expect(r.value?.matchingKey, 'user_a');
+      expect(r.value?.bucketingKey, 'bucket_1');
+    });
+
+    test('rejects a whitespace-only matchingKey', () {
+      final r = validateKey(const Key(matchingKey: '   '), 'getTreatment');
+      expect(r.isValid, isFalse);
+    });
+
+    test('rejects a whitespace-only bucketingKey', () {
+      final r = validateKey(
+        const Key(matchingKey: 'user_a', bucketingKey: '   '),
+        'getTreatment',
+      );
+      expect(r.isValid, isFalse);
+    });
+
+    test(
+        'accepts a matchingKey that is only over-length because of '
+        'surrounding whitespace', () {
+      final r = validateKey(
+        Key(matchingKey: ' ${'a' * 250} '),
+        'getTreatment',
+      );
+      expect(r.isValid, isTrue);
+      expect(r.value?.matchingKey, 'a' * 250);
     });
   });
 }

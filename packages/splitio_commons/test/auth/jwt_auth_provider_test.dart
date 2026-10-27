@@ -77,7 +77,8 @@ void main() {
     now = DateTime.fromMillisecondsSinceEpoch(1000000 * 1000);
     activeKeys = const [];
     fake = _FakeHttpClient();
-    httpClient = SplitHttpClient(apiKey: 'sdk-key-123', client: fake);
+    httpClient = SplitHttpClient(
+        sdkVersion: 'dart_test-1.0.0', apiKey: 'sdk-key-123', client: fake);
   });
 
   group('JwtAuthProvider — successful fetch', () {

@@ -43,12 +43,17 @@ class NotificationResult {
 /// cause the notification to be ignored (empty result) rather than throw.
 class NotificationProcessor {
   /// LOCAL v1 data notification types handled as [FeedUpdate]s (§11.4).
+  ///
+  /// `SEGMENT_UPDATE` is the server-side segment membership notification
+  /// (the SS analogue of `MEMBERSHIPS_MS_UPDATE`); routing is a no-op on
+  /// client-side topology because no segment fetcher is wired in.
   static const Set<String> _localDataTypes = {
     'SPLIT_UPDATE',
     'SPLIT_KILL',
     'MEMBERSHIPS_MS_UPDATE',
     'MEMBERSHIPS_LS_UPDATE',
     'RB_SEGMENT_UPDATE',
+    'SEGMENT_UPDATE',
   };
 
   const NotificationProcessor();

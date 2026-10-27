@@ -211,7 +211,7 @@ flowchart LR
 Key            { matchingKey: String, bucketingKey: String? }   // bucketingKey defaults to null (NOT matchingKey)
 Target         { key: Key, attributes: Attributes, trafficType: String? }
 Attributes     = Map<String, AttrValue>
-AttrValue      = String | num | bool | List<String> | DateTime(epoch millis)
+AttrValue      = String | num | bool | Iterable<String> | DateTime(epoch millis)
                  // missing/null attribute → matcher returns false
 EvaluationOptions { properties: Map<String, Object?>? }          // attached to impression, NOT used by engine
 ```
@@ -224,6 +224,13 @@ EvaluationOptions { properties: Map<String, Object?>? }          // attached to 
 - A missing or `null` attribute referenced by a matcher MUST cause that matcher to return `false`.
 - `EvaluationOptions.properties` MUST be attached to the impression and MUST NOT be consumed by the
   engine.
+- `EvaluationOptions.properties` MUST be validated at evaluation time with the same rules as `track`
+  properties (§16), before the impression is recorded: a value that is not `String`, `num`, `bool`
+  or `null` MUST be set to `null` with a warning naming the property; when the estimated size
+  exceeds 32 KB the properties MUST be dropped with an error log, and the evaluation and its
+  impression MUST still proceed without them. A recorded impression MUST NOT carry a value that
+  cannot be JSON-encoded. Source: `javascript-commons` `utils/inputValidation/eventProperties.ts`
+  (`validateEvaluationOptions`).
 
 ### 4.2 Two `EvaluationResult` types
 
@@ -266,7 +273,7 @@ UniqueKeys (MTK) (feature → set of keys)
 Readiness events:
 - READY — latched; delivered as Future<void> whenReady()
 - READY_TIMEOUT — latched; delivered as Future<void> whenTimeout()
-- UPDATE — recurring; delivered as Stream<List<String>> whenUpdated() with payload of changed flag names (active + archived)
+- UPDATE — recurring; delivered as Stream<List<String>> whenUpdated() with payload of changed flag names (active + archived); an empty list when only segment (or rule-based segment) data changed
 // READY_FROM_CACHE deferred to persistence SPI (§14)
 ```
 
@@ -296,7 +303,8 @@ flowchart TD
   A["SplitClient.getTreatment(flag, {attributes}) — sync, bound Key"] --> B{"validate input (§16)"}
   B -- invalid --> Z["control + 'validation' label"]
   B -- ok --> R{"client ready?"}
-  R -- no --> NR["fallback + 'not ready' label"]
+  R -- no --> NR["fallback + 'not ready' label (no changeNumber)"]
+  NR --> ASM
   R -- yes --> L["RuleStore.get(flag) → ParsedSplit"]
   L -- null --> DNF["fallback + 'definition not found' label"]
   L -- found --> E["engine.evaluate(key, rule, attrs, ctx)"]
@@ -522,27 +530,31 @@ Matchers MUST coerce the supplied attribute value before comparing. All coercion
 an un-coercible value MUST yield `null`, which MUST make the matcher return `false`** (it MUST NOT
 throw). Source: `targeting-engine` `Transformers`.
 
-- **`asLong(obj)`** — MUST accept `Integer`/`Long` only → `long`; anything else (incl. `String`,
-  `Double`) MUST yield `null`. (Numeric matchers therefore MUST only match integral attribute
-  values.)
+- **`asNumber(obj)`** — MUST accept any finite numeric value (integer or floating-point) and MUST
+  return it unchanged for comparison; `String`, `NaN`, `±Infinity` and every other type MUST yield
+  `null`. Numeric matchers MUST compare the value as a number without truncation (e.g. `18.5 ≥ 18` is
+  `true`, `18.5 == 18` is `false`). Source: `javascript-commons` `evaluator/value/sanitize.ts`.
 - **`asBoolean(obj)`** — MUST accept a `Boolean`, or a `String` equal (case-insensitive) to `"true"`/
   `"false"`; otherwise MUST yield `null`.
 - **Date normalization (DATETIME `dataType`):**
-  - `asDate(obj)` — MUST coerce to epoch-millis via `asLong`, then **zero out**
+  - `asDate(obj)` — MUST coerce to epoch-millis via `asNumber` (truncated toward zero to integral
+    millis), then **zero out**
     hour/minute/second/millis in **UTC** (truncate to the day). MUST be used by `EqualToMatcher` (both
     the configured `compareTo` and the runtime value MUST be day-truncated).
-  - `asDateHourMinute(obj)` — MUST coerce via `asLong`, then zero out **seconds + millis** in UTC
+  - `asDateHourMinute(obj)` — MUST coerce via `asNumber` (truncated toward zero to integral millis),
+    then zero out **seconds + millis** in UTC
     (truncate to the minute). MUST be used by `BetweenMatcher`, `GreaterThanOrEqualToMatcher`,
     `LessThanOrEqualToMatcher` for DATETIME.
   - For `EqualToMatcher` the `compareTo` MUST be normalized with `asDate` at construction; the
     comparison matchers MUST normalize `compareTo` with `asDateHourMinute` at construction.
 - **`toSetOfStrings(collection)`** — MUST map each element via `toString()` into a `Set<String>`; MUST
-  be used by all collection (`*_SET`) matchers. The runtime value MUST be a `Collection`, else → false.
+  be used by all collection (`*_SET`) matchers. The runtime value MUST be an iterable collection
+  (ordered or unordered, e.g. a list or a set), else → false.
 
-> **Dart mapping.** `AttrValue = String | num | bool | List<String> | DateTime(epoch millis)` (§4.1).
-> Numeric coercion MUST match Java's integer-only `asLong` (so a `double`/fractional `num` MUST NOT
-> coerce); DateTime attributes arrive as epoch-millis and MUST be truncated in **UTC** exactly as
-> above.
+> **Dart mapping.** `AttrValue = String | num | bool | Iterable<String> | DateTime(epoch millis)`
+> (§4.1). Numeric coercion MUST accept both `int` and `double`, so behavior is identical on the VM
+> and on JS-compiled targets (where `18.0 is int`); DateTime attributes arrive as epoch-millis and
+> MUST be truncated in **UTC** exactly as above.
 
 ### 5.6 Semver semantics (`Semver`)
 
@@ -681,7 +693,8 @@ HttpClient:         Future<HttpResponse> request(method, Uri, headers, body?)   
 StreamingTransport: StreamingResponse    connect(Uri, headers)                 // long-lived line stream + status
                     // SSE *framing* (event/data/id read loop) is shared/concrete (EventSourceClient), NOT this SPI
 // --- other platform SPIs ---
-Decompressor:       List<int> decode(bytes, CompressionType{gzip|zlib|none})
+Decompressor:       Uint8List decode(Uint8List bytes, CompressionType{none|gzip|zlib})
+                    // MUST be pure Dart and available on every target; failures MUST throw
 PersistentStore:    load()/save() (no-op v1)
 Clock / Scheduler:  now(), periodic + delayed tasks
 
@@ -714,12 +727,12 @@ class SplitFactory {                                   // composition root; Axis
 
 class SplitClient {                                    // CS shell (bound Key); eval is SYNCHRONOUS
   String getTreatment(String flag, {Map<String, Object?>? attributes, EvaluationOptions? opts});
-  List<String> getTreatments(List<String> flags, {Map<String, Object?>? attributes, EvaluationOptions? opts});
-  List<String> getTreatmentsByFlagSets(List<String> flagSets, {Map<String, Object?>? attributes, EvaluationOptions? opts});
+  Map<String, String> getTreatments(List<String> flags, {Map<String, Object?>? attributes, EvaluationOptions? opts});
+  Map<String, String> getTreatmentsByFlagSets(List<String> flagSets, {Map<String, Object?>? attributes, EvaluationOptions? opts});
 
   EvaluationResult getTreatmentWithConfig(String flag, {Map<String, Object?>? attributes, EvaluationOptions? opts});
-  List<EvaluationResult> getTreatmentsWithConfig(List<String> flags, {Map<String, Object?>? attributes, EvaluationOptions? opts});
-  List<EvaluationResult> getTreatmentsWithConfigByFlagSets(List<String> flagSets, {Map<String, Object?>? attributes, EvaluationOptions? opts});
+  Map<String, EvaluationResult> getTreatmentsWithConfig(List<String> flags, {Map<String, Object?>? attributes, EvaluationOptions? opts});
+  Map<String, EvaluationResult> getTreatmentsWithConfigByFlagSets(List<String> flagSets, {Map<String, Object?>? attributes, EvaluationOptions? opts});
 
   bool track(String eventType, String trafficType, {double? value, Map<String, Object?>? properties});
 
@@ -745,8 +758,18 @@ class EvaluationResult {
   metadata (label, changeNumber) MUST NOT be exposed in the public type.
 - **Attributes MUST be passed per evaluation call**, not bound to the client. This follows the
   standard client-side SDK pattern where attributes are transient context provided at evaluation time.
-- **An invalid SDK key/key MUST produce a `NoOpSplitFactory`** whose clients MUST return `'control'`
-  and empty results, and MUST accept no events.
+- **Multi-flag methods MUST return a `Map` keyed by flag name.** For `getTreatments` /
+  `getTreatmentsWithConfig` the keys MUST be the validated (trimmed, de-duplicated) flag names;
+  invalid names MUST be omitted and logged (§16). For the `ByFlagSets` variants the keys MUST be the
+  names of the flags belonging to the requested sets. An input with no valid names MUST return an
+  empty map.
+- The server-side shell (target per call) MUST use the same return types, with the key as the
+  first argument.
+- **An invalid SDK key/key MUST produce a `NoOpSplitFactory`** and MUST log an error stating the
+  reason. Its clients MUST return `'control'` (per valid flag name for multi-flag methods; an empty
+  map for the `ByFlagSets` variants) and MUST accept no events. A NoOp client's `whenReady()` MUST
+  NOT complete; its `whenTimeout()` MUST complete after `readyTimeout` (§8.2), so the invalid
+  configuration surfaces as a startup failure.
 - **`SplitFactory.client()` MUST accept an optional `Key`**: when omitted, it MUST return the default
   client bound to the `Key` provided to `SplitFactory.create()`; when present, it MUST return a
   client bound to the supplied `Key` (with per-Key memberships fetched on demand).
@@ -757,9 +780,21 @@ class EvaluationResult {
 - **If `SplitFactory.create` receives a `key` argument that is neither `Key` nor `String`**,
   it MUST return the NoOp factory (consistent with the "invalid SDK key/key → NoOp" rule
   above).
-- **If `SplitFactory.client` receives a `key` argument that is neither `Key`, `String`,
-  nor `null`**, it MUST log a warning and return the client bound to the bootstrap `Key`
-  supplied to `SplitFactory.create` — i.e. behave as if called with no argument.
+- **If `SplitFactory.client` receives a `num` key**, it MUST log a warning and convert it
+  with `toString()`; the result MUST be treated as a `String` key (a distinct client, not the
+  bootstrap one).
+- **If `SplitFactory.client` receives an invalid key** — a matching or bucketing key that is
+  empty after trimming or longer than 250 chars (§16), or a value that is neither `Key`, `String`,
+  `num` nor `null` — it MUST log an error and MUST return a NoOp client (same behavior as the
+  NoOp factory's clients above). It MUST NOT throw and MUST NOT return the bootstrap client. The
+  NoOp client MUST NOT trigger a `/memberships` fetch.
+- **Duplicate factories.** The SDK MUST keep a process-wide count of live (not destroyed)
+  factories per SDK key. When `SplitFactory.create` builds a factory for an SDK key that already
+  has live factories, it MUST log a warning that includes the count of existing factories for that
+  key; when it builds a factory while live factories exist only for other SDK keys, it MUST log a
+  warning that another factory instance exists. `destroy()` MUST decrement the count. NoOp
+  factories MUST NOT be counted. Source: `javascript-commons`
+  `utils/inputValidation/apiKey.ts` (`validateAndTrackApiKey`, `releaseApiKey`).
 - **Named parameters MUST be used** for optional arguments (attributes, opts, value, properties)
   following Dart best practices. Positional optionals MUST NOT be used when there are multiple
   optional parameters.
@@ -789,6 +824,17 @@ SplitView {                          // read-only metadata projection of a Parse
 `SplitView` MUST be assembled from the stored `ParsedSplit` (no engine involvement). `split(flag)`
 MUST return `null` if the flag is unknown. Source parity:
 `javascript-commons/src/sdkManager/index.ts` (`objectToView`).
+
+After `factory.destroy()`, the manager MUST NOT read the stores:
+
+| Method | Behavior after factory destroy |
+|--------|--------------------------------|
+| `split(flag)` | MUST log `"split: Client has already been destroyed - no calls possible."` and return `null`. |
+| `splits()` | MUST log `"splits: Client has already been destroyed - no calls possible."` and return an empty list. |
+| `names()` | MUST log `"names: Client has already been destroyed - no calls possible."` and return an empty list. |
+
+Destroying only the main or a shared client MUST NOT affect the manager. Source:
+`javascript-commons/src/sdkManager/index.ts` (`validateIfNotDestroyed`).
 
 ### 7.2 User Consent
 
@@ -843,10 +889,35 @@ flowchart TD
 - `whenReady()` and `whenTimeout()` MUST be latched Futures — subscribers after the milestone MUST
   receive an already-completed Future. They MUST be independent: READY MAY still fire after TIMEOUT.
 - `whenUpdated()` MUST be a broadcast stream of changed flag names (§4.6) and MUST NOT be latched.
+- After READY, a segment fetch (polling or streaming; server-side segments, client-side memberships,
+  and rule-based segments) that adds or removes at least one key MUST emit UPDATE with an empty
+  payload (`[]`). A no-op fetch MUST NOT emit UPDATE, and nothing MUST be emitted before READY.
+- Readiness and UPDATE MUST be tracked **per client**. A memberships change (client-side) MUST emit
+  UPDATE only on the clients bound to the affected matching key; flag, kill and rule-based segment
+  changes MUST emit UPDATE on every client of the factory. A client MUST NOT reach READY on another
+  client's memberships.
 - If a client is destroyed before a milestone fires, its pending Futures MUST complete normally
   (no error) so awaiters unblock cleanly. The `whenUpdated()` stream MUST close (subscribers
   receive `onDone`).
-- Evaluation before `READY` MUST return fallback + `not ready`.
+- READY MUST fire the first time the readiness condition holds, **regardless of which sync path**
+  satisfied it (initial sync, a periodic poll, or a streaming catch-up fetch). A failed initial sync
+  MUST NOT prevent READY from firing later, including after READY_TIMEOUT.
+- After any successful flags fetch (initial, poll, retry or streaming) that registers segment names
+  not yet fetched, the SDK MUST fetch those segments immediately, not on the next segments polling
+  interval, so READY fires as soon as the flags and their segments have loaded.
+- Evaluation before `READY` MUST return fallback + `not ready`. It MUST also record an impression
+  for each evaluated flag (through the normal impressions pipeline of §13, so the impressions mode,
+  user consent and the impression listener apply as for any impression) labeled `not ready`, with
+  the fallback treatment and **no `changeNumber`** (the `c` field MUST be omitted from the posted
+  impression). The destroyed check and input validation (§16) MUST run first: a destroyed client or
+  an invalid key or flag name MUST NOT record an impression. `ByFlagSets` variants resolve no flags
+  before `READY` and so return an empty result and record nothing. The SDK SHOULD log one WARN per
+  call: `<method>: the SDK is not ready to evaluate. Results may be incorrect. Make sure to wait for
+  SDK readiness before using this method.` (javascript-commons `sdkClient/client.ts`,
+  `clientInputValidation.ts`).
+- The `readyTimeout` timer MUST start when the factory is created (`SplitFactory.create`), not after
+  the initial sync completes. It MUST be cancelled when READY fires and when the factory is
+  destroyed, so a destroyed factory never emits TIMEOUT.
 
 ```mermaid
 stateDiagram-v2
@@ -947,7 +1018,7 @@ Once a client (main or shared) is marked destroyed, its methods MUST behave as f
 | `getTreatmentsWithConfig(...)` | MUST return a list of `EvaluationResult(treatment: 'control', config: null)`. |
 | `getTreatmentsWithConfigByFlagSets(...)` | MUST return a list of `EvaluationResult(treatment: 'control', config: null)`. |
 | `flush()` | MUST return an immediately-completed `Future` and MUST NOT call `SyncManager.flushRecorders()`. |
-| `whenReady()` / `whenTimeout()` / `whenUpdated()` | MUST remain readable. Lifecycle events MUST complete normally (not error) so awaiters unblock. The `whenUpdated()` stream SHOULD close on destroy. |
+| `whenReady()` / `whenTimeout()` / `whenUpdated()` | MUST remain readable. Lifecycle events MUST complete normally (not error) so awaiters unblock. The `whenUpdated()` stream MUST close (subscribers receive `onDone`) when this client is destroyed, without affecting other clients of the same factory (§8.2). |
 
 #### flush
 
@@ -998,6 +1069,12 @@ Once a client (main or shared) is marked destroyed, its methods MUST behave as f
   > next notification. This is an accepted trade-off; the SDK MUST NOT re-introduce a catch-up loop to
   > close it. (A low-frequency safety poll is the appropriate tool if a hard convergence guarantee is
   > ever required; it is out of scope for v1.)
+- **Cursors MUST be monotonic.** The SDK MUST NOT apply an `ff` section whose `t` is below the
+  currently stored flag cursor, and MUST NOT apply an `rbs` section whose `t` is below the currently
+  stored rule-based-segment cursor. Such a response is stale: typically a fetch that was already in
+  flight while newer changes landed in place via streaming (§12.1). Discarding a stale section MUST
+  leave the stored definitions and that cursor unchanged, and MUST NOT affect the other section of the
+  same response. A section whose `t` equals the stored cursor MUST still be applied.
 - **The initial sync fetch (§8.1) MUST likewise be a single fetch.** `READY` (§8.2) MUST fire once that
   fetch completes successfully and **MUST NOT wait for `ff.t == ff.s`** — every returned rule is valid
   and fully evaluable, and freshness converges via the next driver.
@@ -1021,6 +1098,10 @@ CDN caching). The coordinator MUST be **decoupled from `NetworkFacade`** (feed s
 trigger **a single path-A fetch (no `till`, no CDN-bypass)**, with convergence falling to the next
 cycle / next notification (§10.1).
 
+- Fetches triggered by a streaming notification (each retry and the bypass attempt) MUST send `Cache-Control: no-cache`. Periodic polls, the initial sync and the `SocketOpened` catch-up fetch MUST NOT send it.
+- The coordinator MUST apply per cursor: `ff` (`SPLIT_UPDATE`/`SPLIT_KILL`), `rbs` (`RB_SEGMENT_UPDATE`) and, server-side, each segment's own cursor (`SEGMENT_UPDATE`). It MUST retry while the cursor is below the notified `changeNumber` (§19.5 backoff, at most 10 attempts), then make one `till=<changeNumber>` bypass fetch, then give up until the next notification or poll. A newer notification MUST restart it.
+- An in-place `SPLIT_KILL` MUST NOT advance the `ff` cursor; the follow-up fetch MUST still converge to the kill's `changeNumber`.
+
 ### 10.3 HTTP status taxonomy (shared by feeds, recorders, auth, streaming)
 
 Implementations MUST handle HTTP statuses as follows:
@@ -1034,6 +1115,9 @@ Implementations MUST handle HTTP statuses as follows:
 | `429` / `5xx` | Transient | retry w/ backoff |
 | other `4xx` | Client error | non-retryable (`DO_NOT_RETRY`) |
 
+- A data fetch (`/splitChanges`, `/segmentChanges`, `/memberships`) that ends in any non-success
+  status MUST be logged at **error** level, whatever its action above. Source: `javascript-commons`
+  `services/splitHttpClient.ts` (`ERROR_HTTP`).
 - The **`flagsSpec`** version param (`s=1.3`) MUST be included in v1.
 - **`UPDATE` MUST carry changed flag names** (active + archived).
 
@@ -1119,12 +1203,12 @@ stateDiagram-v2
   Started --> Started: SocketOpened / ResetBackoff + catch-up Fetch
   Started --> Reconnecting: SocketError(retryable) / ScheduleReconnect
   Reconnecting --> Started: ReconnectTimerFired / OpenSocket
-  Started --> PollingFallback: >=2 failures OR controlPaused OR occupancyZero (pushUp=false)
+  Started --> PollingFallback: retryable failure OR controlPaused OR occupancyZero (pushUp=false)
   PollingFallback --> Started: recovery (pushUp=true) / catch-up Fetch
   Started --> Stopped: Stop / ControlDisabled / TokenPushDisabled / non-retryable
   Started --> Paused: Pause / CloseCurrentSocket
   Paused --> Started: Resume / OpenSocket
-  Started --> Reconnecting: ErrorFrame(tokenError) / InvalidateToken + reconnect
+  Started --> Reconnecting: ErrorFrame(retryable) / InvalidateToken (if token error) + ScheduleReconnect
 ```
 
 ### 11.3 Auth/JWT + reconnect
@@ -1147,10 +1231,15 @@ stateDiagram-v2
   without a prior proactive refresh MUST still be handled **reactively** as a backstop: the server
   emits a token error and the FSM MUST reconnect, which MUST pull a fresh credential.
 - **Token error** = HTTP `401` or code `40140–40149` → it MUST trigger `InvalidateToken`
-  (`AuthProvider.invalidate`) + reconnect.
-- Reconnect MUST be **deduped** (also via the provider's in-flight dedup); `≥2 consecutive failures`
-  MUST set `connectionDown` (poll fallback) + backoff; `SocketOpened` MUST reset backoff/occupancy +
-  MUST trigger a catch-up `Fetch`.
+  (`AuthProvider.invalidate`) and MUST be handled as a retryable failure (below).
+- Reconnect MUST be **deduped** (also via the provider's in-flight dedup). **Every retryable
+  failure** — `SocketError(retryable)` or a retryable `ErrorFrame` (token error `40140–40149`) — MUST
+  close the current socket, set `connectionDown = true`, emit `NotifyPushDisabled` (poll fallback),
+  and `ScheduleReconnect` with the **next** backoff step (§19.5), so consecutive failures grow the
+  delay. `NotifyPushDisabled` MUST be emitted on every such failure, **including before the first
+  successful connect**, and receivers MUST treat it idempotently (no effect if polling already
+  runs). `SocketOpened` MUST reset backoff/occupancy and MUST trigger a catch-up `Fetch`. Source:
+  `javascript-commons` `sync/streaming/pushManager.ts` (`PUSH_RETRYABLE_ERROR`).
 - **Auth MUST be off the readiness critical path** (§8.2): `clientReady` MUST depend only on
   rules+rbs+memberships. Auth/streaming failure MUST fall back to poll; the client MUST still reach
   `READY`.
@@ -1191,6 +1280,9 @@ MUST be ignored):
   fetch**.
 - `SPLIT_KILL` MUST carry `defaultTreatment` + `changeNumber` → the SDK MUST perform an **immediate
   in-place kill**, then fetch.
+- Any in-place apply (`SPLIT_UPDATE` with definition, `SPLIT_KILL`) MUST emit `UPDATE` with the
+  affected flag name(s) (§4.6) and MUST perform the same post-apply side effects as a fetched change
+  (e.g. registering newly referenced segments on server-side).
 
 ### 12.2 Membership side (4 strategies; MS + LS, LS is CS-only)
 
@@ -1201,7 +1293,12 @@ MUST be ignored):
 | `KEY_LIST` (2) | `{a:[addedHashes], r:[removedHashes]}` | resolve user's action ADD/REMOVE/NONE; apply named segments **in place** (§12.3) |
 | `SEGMENT_REMOVAL` (3) | segment names | remove named segments **in place** |
 
-- **Any decode/processing error MUST fall back to unbounded fetch** (safe default).
+- **Any decode/processing error MUST fall back to a fetch** (safe default): unbounded `/memberships`
+  for membership notifications, `/splitChanges` for `SPLIT_UPDATE`.
+- A decode error on a non-empty `d` SHOULD be logged **once per notification** at WARNING:
+  `Fetching SplitChanges due to an error processing SPLIT_UPDATE notification: <error>` or
+  `Fetching Memberships due to an error processing <BoundedFetchRequest|KeyList> notification: <error>`.
+  An absent or empty `d` MUST fall back silently.
 - **The `Decompressor` SPI (Axis 1)** MUST handle gzip/zlib. **`MembershipPayloadDecoder`** MUST own
   bitmap index/test + key-list hashing (algorithm + seed).
 - **`SyncDelayCalculator`** MUST apply a seed-based jitter delay (behind `Clock`/`Scheduler`) to
@@ -1224,6 +1321,14 @@ Sources: `MySegmentsV2PayloadDecoder.java`, `SyncDelayCalculatorImpl.java`,
 | other | — | unknown → **drop + fetch fallback** |
 
 The pipeline MUST always be **base64-decode → decompress** (`d` is base64 of the compressed bytes).
+
+- The base64 decode of `d` MUST accept input with no `=` padding.
+- Implementations MUST verify the gzip CRC-32 and ISIZE trailers and the zlib Adler-32 trailer; a
+  mismatch MUST be treated as a decode error (fetch fallback).
+- Decompressed `SPLIT_UPDATE` and `KEY_LIST` payloads MUST be decoded as strict UTF-8 JSON; invalid
+  UTF-8 is a decode error.
+- Implementations MUST cap the decompressed size (RECOMMENDED 16 MiB); exceeding it is a decode error.
+- Implementations MAY reject trailing bytes after the gzip/zlib trailer as a decode error.
 
 **Key hashing (membership bitmap + key-list):**
 
@@ -1303,6 +1408,12 @@ later via `Scheduler` (Axis 1).
 `NetworkFacade.post*`. The persistent-queue seam MUST be present but MUST be **no-op in v1**. Caps
 (events): **max queue 5000, batch 500, max 5 MB**.
 
+- A recorder POST that ends in a transient status (`429`/`5xx`, §10.3) or a transport error MUST NOT
+  be silently dropped: the batch MUST be retained and retried **once** on the next flush cycle; if the
+  retry also fails, the batch MUST be dropped and a **warning** MUST be logged with the data type and
+  item count. Each failed attempt MUST be logged. A non-retryable status (other `4xx`) MUST drop the
+  batch with a warning. Source: `javascript-commons` `sync/submitters/submitter.ts`.
+
 ### 13.2 Three impression modes
 
 | Mode | Individual impressions | Counts | Unique keys (MTK) | Dedup |
@@ -1311,6 +1422,11 @@ later via `Scheduler` (Axis 1).
 | `DEBUG` | all (sets `pt`) | no | no | observer for `pt` only |
 | `NONE` | none | yes | yes | — |
 
+- An impression carrying `EvaluationOptions.properties` (non-empty) MUST NOT be deduped in
+  `OPTIMIZED` mode: it MUST be queued as an individual impression (and MUST NOT be counted), as in
+  `DEBUG`. Its `properties` MUST be posted as a JSON-encoded **string** in the impression's
+  `properties` field (Appendix A.5); impressions without properties MUST omit the field. Source:
+  `javascript-commons` `trackers/strategy/strategyOptimized.ts`.
 - There MUST be **three outbound recorders:** impressions / impression-counts / unique-keys (MTK).
 - **`ImpressionsObserver` (dedup LRU) MUST be shared** (CS + SS). **`UniqueKeysTracker` MUST be the
   Axis-3 port** (CS = set; SS = bloom) — this is the actual CS/SS difference.
@@ -1361,17 +1477,17 @@ is part of the contract).
 SplitClientConfig {
   SyncConfig sync {
     SyncMode mode = STREAMING;            // POLLING | STREAMING | SINGLE_SYNC
-    int featureFlagsPollingRate;          // min-bounded
-    int segmentsPollingRate;              // min-bounded
-    int impressionsPushRate;              // min-bounded
-    int eventsPushRate;                   // min-bounded
+    int featureFlagsPollingRate;          // min-bounded on SS (§19.4)
+    int segmentsPollingRate;              // min-bounded on SS (§19.4)
+    int impressionsPushRate;              // min-bounded on SS (§19.4)
+    int eventsPushRate;                   // min-bounded on SS (§19.4)
     int readyTimeout = 10;                // seconds
     ServiceEndpoints? serviceEndpoints;   // host overrides — see §19.1
   }
   StorageConfig storage { String? prefix; }            // reserved for persistence (no-op now)
   FiltersConfig filters { List<String>? flagSets; }    // normalized: lowercase, regex, dedup, sort
   FallbackTreatmentsConfiguration? fallbackTreatments;  // global + per-flag control overrides (§15.1)
-  LogLevel logLevel;
+  LogLevel logLevel = NONE;               // silent by default (JS parity, both flavors)
   ImpressionsMode impressionsMode;        // OPTIMIZED | DEBUG | NONE
   ConsentStatus userConsent = GRANTED;    // initial consent (§7.2)
   ImpressionListener? impressionListener; // optional SPI (§13.3)
@@ -1478,11 +1594,13 @@ Implementations MUST enforce the following:
 
 | Input | Rule | On violation |
 |-------|------|--------------|
-| `matchingKey` / `bucketingKey` | non-empty, ≤ **1024** chars | eval → control + `validation`; `NoOp` factory if SDK-key/default-key invalid |
+| SDK key | trimmed, non-empty | `NoOp` factory + error log |
+| `matchingKey` / `bucketingKey` | trimmed, non-empty, ≤ **250** chars; the trimmed value MUST be used for evaluation, bucketing, impressions and events | eval → control + `validation`; `NoOp` factory if SDK-key/default-key invalid |
 | `flag` name | trimmed, non-empty | control + `validation` |
 | `eventType` | regex `^[a-zA-Z0-9][-_.:a-zA-Z0-9]{0,79}$` | `track` returns `false` |
 | `trafficType` | non-empty; lowercased (warn if upper) | normalized |
-| `track` properties | ≤ **300** entries; total event ≤ **32 KB** | clamp/reject + warn |
+| `track` properties | values MUST be `String`/`num`/`bool`/`null`; > **300** entries; total event ≤ **32 KB** | other value types → nulled + warn; > 300 entries → warn, event still tracked; > 32 KB → `track` returns `false` + error log |
+| `EvaluationOptions.properties` | same rules as `track` properties | other value types → nulled + warn; > 300 entries → warn; > 32 KB → properties dropped + error log, evaluation and impression still proceed; empty after validation → treated as absent |
 | `flagSet` names | regex `^[a-z0-9][_a-z0-9]{0,49}$`; lowercase; dedup; sort | drop invalid + warn |
 | fallback treatment (§15.1) | non-empty string, ≤ **100** chars, regex `^[0-9]+[.a-zA-Z0-9_-]*$\|^[a-zA-Z]+[a-zA-Z0-9_-]*$` | discard entry + error-log |
 | fallback `byFlag` name (§15.1) | ≤ **100** chars; no spaces | discard entry + error-log |
@@ -1621,16 +1739,21 @@ with the static `Bearer <sdkKey>` credential.
 
 | Setting | Default | Min bound | Notes |
 |---------|---------|-----------|-------|
-| `featureFlagsPollingRate` | 60 s | — | polling mode |
-| `segmentsPollingRate` | 60 s | — | memberships polling |
-| `impressionsPushRate` | 300 s (OPTIMIZED) / 60 s (DEBUG) | — | recorder flush |
-| `eventsPushRate` | 60 s | — | recorder flush |
+| `featureFlagsPollingRate` | 60 s | SS: 30 s | polling mode |
+| `segmentsPollingRate` | 60 s | SS: 30 s | segments / memberships polling |
+| `impressionsPushRate` | 300 s (OPTIMIZED) / 60 s (DEBUG) | SS: 30 s | recorder flush |
+| `eventsPushRate` | 60 s | SS: 30 s | recorder flush |
 | impressions-count rate | 1800 s (30 min) | — | hardcoded; retry once |
 | unique-keys (MTK) rate | 900 s (15 min) | — | hardcoded |
 | `telemetryRefreshRate` | 3600 s | 60 s | reserved |
 | `readyTimeout` | 10 s | — | §8.2 |
 | events queue size | 500 | — | flush trigger + cap |
 | impressions queue size | 30000 | — | flush trigger + cap |
+
+Min bounds apply to the **server-side** flavor only: a value below the bound MUST be raised to it
+and MUST log a warning naming the setting. The **client-side** flavor MUST NOT clamp positive
+values (JS parity: `javascript-commons` enforces no minimum on these rates); a non-positive value
+MUST fall back to the default.
 
 > **Note:** §13.1/§16's "5000 / 5 MB" figures are from other SDKs; the JS reference uses the values
 > above (events queue **500**, impressions queue **30000**). Implementations MUST pin one
@@ -1653,6 +1776,9 @@ Source: `utils/Backoff.ts`, `sync/streaming/UpdateWorkers/constants.ts`.
 
 // POST /v1/keys/cs  (client-side MTK)
 { "keys": [ { "k": "matchingKey", "fs": ["feature1", "feature2"] } ] }   // fs = feature names seen for this key
+
+// POST /v1/keys/ss  (server-side MTK)
+{ "keys": [ { "f": "feature_name", "ks": ["key1", "key2"] } ] }   // ks = keys seen for this feature
 ```
 
 ---
@@ -1864,7 +1990,7 @@ Sources: `android-client/main/src/test/resources/split_changes_1.json`,
 }
 
 // POST /testImpressions/bulk — recorder payload (grouped by feature)
-[ { "f":"feature_name", "i":[ {"k":"matchingKey","t":"on","m":1506703262916,"c":1506703262916,"r":"label","b":"bucketingKey","pt":1506703200000} ] } ]
+[ { "f":"feature_name", "i":[ {"k":"matchingKey","t":"on","m":1506703262916,"c":1506703262916,"r":"label","b":"bucketingKey","pt":1506703200000,"properties":"{\"k\":\"v\"}"} ] } ]   // properties: JSON string, omitted when absent
 
 // POST /events/bulk
 [ { "key":"matchingKey", "trafficTypeName":"user", "eventTypeId":"my_event", "value":1.5, "timestamp":1506703262916, "properties":{"k":"v"} } ]

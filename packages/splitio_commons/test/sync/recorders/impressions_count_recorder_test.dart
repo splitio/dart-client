@@ -24,6 +24,7 @@ void main() {
       http.Client? mockClient,
     }) {
       final client = SplitHttpClient(
+        sdkVersion: 'dart_test-1.0.0',
         apiKey: 'test-api-key',
         client: mockClient ??
             MockClient((req) async {
@@ -99,7 +100,9 @@ void main() {
       await expectLater(recorder.flush(), completes);
     });
 
-    test('flush retries once on failure then succeeds', () async {
+    test(
+        'flush retains the batch on failure and retries it on the NEXT '
+        'flush cycle (spec §13.1 — not inline within the same call)', () async {
       counter.record('feat', 1000);
       var attempts = 0;
 
@@ -113,12 +116,15 @@ void main() {
       );
 
       await recorder.flush();
+      expect(attempts, 1, reason: 'first attempt is not retried inline');
 
-      expect(attempts, 2);
+      await recorder.flush();
+      expect(attempts, 2, reason: 'the retained batch is sent on next cycle');
       expect(capturedRequests, hasLength(2));
     });
 
-    test('flush gives up after one retry still fails', () async {
+    test('flush drops the batch if the retry on the next cycle also fails',
+        () async {
       counter.record('feat', 1000);
       var attempts = 0;
 
@@ -129,7 +135,12 @@ void main() {
         }),
       );
 
+      await recorder.flush();
       await expectLater(recorder.flush(), completes);
+      expect(attempts, 2);
+
+      // Dropped: a third cycle with nothing new queued posts nothing.
+      await recorder.flush();
       expect(attempts, 2);
     });
 
@@ -142,6 +153,32 @@ void main() {
       // second flush should post nothing
       await recorder.flush();
       expect(capturedRequests, hasLength(1));
+    });
+
+    test(
+        'clearRetained drops a batch retained after a failed POST — no '
+        'retry on the next flush (spec §7.2)', () async {
+      counter.record('feat', 1000);
+      var attempts = 0;
+
+      final recorder = makeRecorder(
+        mockClient: MockClient((req) async {
+          attempts++;
+          throw Exception('network error');
+        }),
+      );
+
+      await recorder.flush();
+      expect(attempts, 1, reason: 'first attempt fails, batch retained');
+
+      recorder.clearRetained();
+
+      await recorder.flush();
+      expect(
+        attempts,
+        1,
+        reason: 'retained batch was dropped — no retry POST happened',
+      );
     });
 
     test('pushRateSeconds is 1800', () {

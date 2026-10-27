@@ -66,6 +66,13 @@ class OptimizedImpressionStrategy implements ImpressionStrategy {
 
   @override
   void process(KeyImpression impression) {
+    // Impressions with properties behave like DEBUG without `pt`: always
+    // queued, never deduped nor counted (spec §13.2, matches JS SDK).
+    final props = impression.properties;
+    if (props != null && props.isNotEmpty) {
+      _store.push(impression);
+      return;
+    }
     final pt = _observer.testAndSet(
       impression.feature,
       impression.keyName,

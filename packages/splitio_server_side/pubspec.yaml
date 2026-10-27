@@ -1,0 +1,14 @@
+name: splitio_server_side
+description: Official Dart SDK for Split — server-side flavor with polling sync and SIGTERM lifecycle handling.
+version: 1.0.0
+homepage: https://split.io
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  splitio_commons: ^3.0.0
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^3.0.0

@@ -62,20 +62,22 @@ class TestableSplitClient implements SplitClient {
   }
 
   @override
-  List<String> getTreatments(List<String> flags,
+  Map<String, String> getTreatments(List<String> flags,
       {Map<String, Object?>? attributes, EvaluationOptions? opts}) {
-    return flags
-        .map((f) => getTreatment(f, attributes: attributes, opts: opts))
-        .toList();
+    return {
+      for (final f in flags)
+        f: getTreatment(f, attributes: attributes, opts: opts)
+    };
   }
 
   @override
-  List<String> getTreatmentsByFlagSets(List<String> flagSets,
+  Map<String, String> getTreatmentsByFlagSets(List<String> flagSets,
       {Map<String, Object?>? attributes, EvaluationOptions? opts}) {
     final splits = _ruleStore.getByFlagSets(flagSets);
-    return splits
-        .map((s) => getTreatment(s.name, attributes: attributes, opts: opts))
-        .toList();
+    return {
+      for (final s in splits)
+        s.name: getTreatment(s.name, attributes: attributes, opts: opts)
+    };
   }
 
   @override
@@ -85,24 +87,25 @@ class TestableSplitClient implements SplitClient {
   }
 
   @override
-  List<EvaluationResult> getTreatmentsWithConfig(List<String> flags,
+  Map<String, EvaluationResult> getTreatmentsWithConfig(List<String> flags,
       {Map<String, Object?>? attributes, EvaluationOptions? opts}) {
-    return flags
-        .map((f) =>
-            getTreatmentWithConfig(f, attributes: attributes, opts: opts))
-        .toList();
+    return {
+      for (final f in flags)
+        f: getTreatmentWithConfig(f, attributes: attributes, opts: opts)
+    };
   }
 
   @override
-  List<EvaluationResult> getTreatmentsWithConfigByFlagSets(
+  Map<String, EvaluationResult> getTreatmentsWithConfigByFlagSets(
       List<String> flagSets,
       {Map<String, Object?>? attributes,
       EvaluationOptions? opts}) {
     final splits = _ruleStore.getByFlagSets(flagSets);
-    return splits
-        .map((s) =>
-            getTreatmentWithConfig(s.name, attributes: attributes, opts: opts))
-        .toList();
+    return {
+      for (final s in splits)
+        s.name:
+            getTreatmentWithConfig(s.name, attributes: attributes, opts: opts)
+    };
   }
 
   @override
@@ -136,12 +139,25 @@ class TestableSplitClient implements SplitClient {
         return const EvaluationResult(treatment: 'control');
       }
 
-      if (!_eventsManager.isReady) {
-        return const EvaluationResult(treatment: 'control');
-      }
-
       final matchingKey = _key.matchingKey;
       final bucketingKey = _key.bucketingKey;
+
+      if (!_eventsManager.isReady) {
+        _impressions.record(
+          KeyImpression(
+            feature: flag,
+            keyName: matchingKey,
+            bucketingKey: bucketingKey,
+            treatment: 'control',
+            label: 'not ready',
+            time: DateTime.now().millisecondsSinceEpoch,
+            properties: opts?.properties,
+          ),
+          false,
+          attributes ?? const {},
+        );
+        return const EvaluationResult(treatment: 'control');
+      }
 
       final engineResult = _evaluator.evaluate(
         matchingKey,
@@ -231,6 +247,7 @@ void main() {
     final observer = ImpressionsObserver();
     impressionsStore = InMemoryImpressionsStore();
     impressions = ImpressionsManager(
+      sdkVersion: 'dart_test-1.0.0',
       strategy:
           DebugImpressionStrategy(observer: observer, store: impressionsStore),
       consentProvider: () => ConsentStatus.granted,
@@ -317,10 +334,16 @@ void main() {
       expect(recorded[0].treatment, equals('on'));
     });
 
-    test('does not record impression when SDK is not ready', () {
+    test(
+        'records a "not ready" impression without changeNumber when SDK is '
+        'not ready', () {
       final client = createClient();
       client.getTreatment('my_flag');
-      expect(impressionsStore.popAll(), isEmpty);
+      final recorded = impressionsStore.popAll();
+      expect(recorded, hasLength(1));
+      expect(recorded.single.treatment, 'control');
+      expect(recorded.single.label, 'not ready');
+      expect(recorded.single.changeNumber, isNull);
     });
 
     test('passes attributes to evaluator', () {
@@ -427,13 +450,13 @@ void main() {
       final results = client.getTreatments(['flag_a', 'flag_b', 'flag_c']);
 
       expect(results, hasLength(3));
-      expect(results, everyElement(equals('on')));
+      expect(results, {'flag_a': 'on', 'flag_b': 'on', 'flag_c': 'on'});
     });
 
     test('returns control for each when not ready', () {
       final client = createClient();
       final results = client.getTreatments(['a', 'b']);
-      expect(results, everyElement(equals('control')));
+      expect(results, {'a': 'control', 'b': 'control'});
     });
 
     test('passes attributes to each evaluation', () {
@@ -483,7 +506,7 @@ void main() {
       final results = client.getTreatmentsByFlagSets(['set1']);
 
       expect(results, hasLength(2));
-      expect(results, everyElement(equals('on')));
+      expect(results, {'flag_a': 'on', 'flag_b': 'on'});
     });
   });
 
@@ -505,8 +528,8 @@ void main() {
       final results = client.getTreatmentsWithConfig(['a', 'b']);
 
       expect(results, hasLength(2));
-      expect(results[0].treatment, equals('on'));
-      expect(results[0].config, equals('{"v":1}'));
+      expect(results['a']!.treatment, equals('on'));
+      expect(results['a']!.config, equals('{"v":1}'));
     });
   });
 
@@ -552,7 +575,9 @@ void main() {
       await expectLater(future, completes);
     });
 
-    test('whenReady is latched — subscribing after ready returns resolved future', () async {
+    test(
+        'whenReady is latched — subscribing after ready returns resolved future',
+        () async {
       eventsManager.notifyReady();
       await expectLater(createClient().whenReady(), completes);
     });
@@ -568,6 +593,7 @@ void main() {
       final client = createClient();
       final received = <List<String>>[];
       final sub = client.whenUpdated().listen(received.add);
+      eventsManager.notifyReady();
       eventsManager.notifyUpdate(['flag_a']);
       await Future.delayed(Duration.zero);
       expect(received, hasLength(1));

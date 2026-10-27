@@ -22,6 +22,17 @@ void main() {
       expect(r.warning, isNotNull);
     });
 
+    test('reports invalid entries through onError, not the warning', () {
+      final errors = <String>[];
+      final r = validateFlagNames(['a', '', ' b '], 'getTreatments',
+          onError: errors.add);
+      expect(r.value, ['a', 'b']);
+      expect(errors, hasLength(1));
+      expect(errors.single, contains('empty feature flag name'));
+      expect(r.warning, contains('extra whitespace'));
+      expect(r.warning, isNot(contains('empty feature flag name')));
+    });
+
     test('trims individual entries', () {
       final r = validateFlagNames(['  a  ', 'b'], 'getTreatments');
       expect(r.isValid, isTrue);

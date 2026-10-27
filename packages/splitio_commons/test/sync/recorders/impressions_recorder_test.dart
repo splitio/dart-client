@@ -9,7 +9,8 @@ import 'package:splitio_commons/src/storage/storage.dart';
 import 'package:splitio_commons/src/sync/sync.dart';
 import 'package:test/test.dart';
 
-KeyImpression _impression(String feature, {int time = 1000, int? pt}) =>
+KeyImpression _impression(String feature,
+        {int time = 1000, int? pt, Map<String, Object?>? properties}) =>
     KeyImpression(
       feature: feature,
       keyName: 'user1',
@@ -19,6 +20,7 @@ KeyImpression _impression(String feature, {int time = 1000, int? pt}) =>
       changeNumber: 42,
       time: time,
       pt: pt,
+      properties: properties,
     );
 
 void main() {
@@ -37,6 +39,7 @@ void main() {
       http.Client? mockClient,
     }) {
       final client = SplitHttpClient(
+        sdkVersion: 'dart_test-1.0.0',
         apiKey: 'test-api-key',
         client: mockClient ??
             MockClient((req) async {
@@ -91,6 +94,21 @@ void main() {
       expect(featB['i'], hasLength(1));
     });
 
+    test('flush posts properties as a JSON-encoded string, omitted if empty',
+        () async {
+      store.push(_impression('feat', properties: {'src': 'cs', 'n': 2}));
+      store.push(_impression('feat', properties: const {}));
+      store.push(_impression('feat'));
+
+      await makeRecorder().flush();
+
+      final items =
+          (jsonDecode(capturedRequests.first.body) as List).first['i'] as List;
+      expect(items[0]['properties'], '{"src":"cs","n":2}');
+      expect(items[1].containsKey('properties'), isFalse);
+      expect(items[2].containsKey('properties'), isFalse);
+    });
+
     test('flush sends SplitSDKImpressionsMode header', () async {
       store.push(_impression('feat'));
 
@@ -142,6 +160,76 @@ void main() {
 
       await recorder.flush();
       expect(store.isEmpty, isTrue);
+    });
+
+    test(
+        'a failed POST is retained and retried on the next flush cycle '
+        '(spec §13.1)', () async {
+      store.push(_impression('feat'));
+      var attempts = 0;
+
+      final recorder = makeRecorder(
+        mockClient: MockClient((req) async {
+          attempts++;
+          capturedRequests.add(req);
+          if (attempts == 1) return http.Response('', 500);
+          return http.Response('', 200);
+        }),
+      );
+
+      await recorder.flush();
+      expect(attempts, 1);
+      expect(store.isEmpty, isTrue, reason: 'store is popped either way');
+
+      await recorder.flush();
+      expect(attempts, 2, reason: 'retained batch resent on next cycle');
+      final body = jsonDecode(capturedRequests.last.body) as List;
+      expect((body.first['i'] as List).first['k'], 'user1');
+    });
+
+    test('a non-retryable 400 drops the batch — no retry on next flush',
+        () async {
+      store.push(_impression('feat'));
+      var attempts = 0;
+
+      final recorder = makeRecorder(
+        mockClient: MockClient((req) async {
+          attempts++;
+          return http.Response('', 400);
+        }),
+      );
+
+      await recorder.flush();
+      expect(attempts, 1);
+
+      await recorder.flush();
+      expect(attempts, 1, reason: 'nothing retained after a 400');
+    });
+
+    test(
+        'clearRetained drops a batch retained after a failed POST — no '
+        'retry on the next flush (spec §7.2)', () async {
+      store.push(_impression('feat'));
+      var attempts = 0;
+
+      final recorder = makeRecorder(
+        mockClient: MockClient((req) async {
+          attempts++;
+          return http.Response('', 500);
+        }),
+      );
+
+      await recorder.flush();
+      expect(attempts, 1, reason: 'first POST fails, batch retained');
+
+      recorder.clearRetained();
+
+      await recorder.flush();
+      expect(
+        attempts,
+        1,
+        reason: 'retained batch was dropped — no retry POST happened',
+      );
     });
 
     test('start creates periodic timer', () async {

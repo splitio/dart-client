@@ -17,6 +17,10 @@ scripts:
     run: dart run melos exec -- dart format .
     description: Format all packages
 
+  sync-versions:
+    run: dart run scripts/sync_sdk_versions.dart
+    description: Generate flavor SDK version constants and commons constraints from pubspec versions
+
   collect-coverage:
     run: |
       find packages -name "*.dart" -path "*/lib/*.dart" -not -path "*/lib/src/*" -not -path "*/e2e/*" | while read f; do

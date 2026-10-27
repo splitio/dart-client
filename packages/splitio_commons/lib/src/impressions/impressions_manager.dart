@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:splitio_commons/src/core/sdk_version.dart';
 import 'package:splitio_commons/src/logger/logger.dart';
 import 'package:splitio_commons/src/models/models.dart';
 
@@ -11,16 +10,19 @@ class ImpressionsManager {
   final ImpressionListener? _listener;
   final ConsentStatus Function() _consentProvider;
   final SplitLogger _log;
+  final String _sdkVersion;
 
   ImpressionsManager({
     required ImpressionStrategy strategy,
     ImpressionListener? listener,
     required ConsentStatus Function() consentProvider,
     required SplitLogger log,
+    required String sdkVersion,
   })  : _strategy = strategy,
         _listener = listener,
         _consentProvider = consentProvider,
-        _log = log;
+        _log = log,
+        _sdkVersion = sdkVersion;
 
   void record(KeyImpression impression, bool impressionsDisabled,
       Attributes? attributes) {
@@ -49,11 +51,11 @@ class ImpressionsManager {
           bucketingKey: impression.bucketingKey,
           treatment: impression.treatment,
           label: impression.label,
-          changeNumber: impression.changeNumber,
+          changeNumber: impression.changeNumber ?? 0,
           time: impression.time,
           pt: impression.pt,
           attributes: attributes,
-          sdkLanguageVersion: sdkVersion,
+          sdkLanguageVersion: _sdkVersion,
         ));
       } catch (_) {}
     });

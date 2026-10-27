@@ -1,3 +1,4 @@
+import 'package:splitio_commons/src/logger/logger.dart';
 import 'package:splitio_commons/src/engine/engine.dart';
 import 'package:splitio_commons/src/models/models.dart' hide EvaluationResult;
 import 'package:test/test.dart';
@@ -10,6 +11,9 @@ class MockEvaluationContext implements EvaluationContext {
   final Map<String, EvaluationResult> _evaluations;
   final Set<String> _segments;
   final Set<String> _ruleBasedSegments;
+
+  @override
+  SplitLogger? get logger => null;
 
   MockEvaluationContext({
     Map<String, EvaluationResult>? evaluations,

@@ -22,7 +22,7 @@ Legend — **Form**: `package` = top-level `packages/<name>/`; `dir` = directory
 | `retryable-http` | dir | `packages/http_client/lib/src/retryable/` | Retry **policy** + status taxonomy (§10.3) over the `HttpClient` SPI; uses `package:backoff` for timing |
 | `storage-core` | package | `packages/storage/` | Package named `storage` |
 | `recorders` | package | `packages/recorders/` | |
-| `sync` | package | `packages/sync/` | Includes `SyncManager`, `StreamingManager`, `OnDemandFetchCoordinator`, `StreamingPolicy` |
+| `sync` | package | `packages/sync/` | Includes the flavor-agnostic `SyncManager` with its `PollingManager` strategies (`PollingManagerCS`, `PollingManagerSS` in `sync/polling/`), `StreamingManager`, `OnDemandFetchCoordinator`, `StreamingPolicy` |
 
 ## §3.2 LOCAL-eval specific (Axis 2 = LOCAL) — all inside `packages/local/`
 

@@ -54,13 +54,42 @@ final class SyncConfig {
     this.streamingEnabled = true,
   });
 
-  SyncConfig normalized() {
+  static const int _defaultFeatureFlagsPollingRate = 60;
+  static const int _defaultSegmentsPollingRate = 60;
+  static const int _defaultImpressionsPushRate = 300;
+  static const int _defaultEventsPushRate = 60;
+
+  /// Minimum polling/push rate (seconds) enforced on the server-side flavor.
+  static const int serverSideMinRate = 30;
+
+  /// Returns a copy with the rates normalized per flavor (spec §19.4).
+  ///
+  /// - [serverSide] `true` (default): every rate below [serverSideMinRate] is
+  ///   raised to it, and [onWarning] receives a message naming each clamped
+  ///   setting.
+  /// - [serverSide] `false` (client-side): positive rates are kept as-is (no
+  ///   minimum, JS parity); non-positive rates fall back to their default.
+  SyncConfig normalized({
+    bool serverSide = true,
+    void Function(String message)? onWarning,
+  }) {
+    int rate(String name, int value, int fallback) {
+      if (!serverSide) return value > 0 ? value : fallback;
+      if (value >= serverSideMinRate) return value;
+      onWarning?.call('$name $value is below the minimum of '
+          '$serverSideMinRate seconds; using $serverSideMinRate.');
+      return serverSideMinRate;
+    }
+
     return SyncConfig(
-      featureFlagsPollingRate:
-          featureFlagsPollingRate < 30 ? 30 : featureFlagsPollingRate,
-      segmentsPollingRate: segmentsPollingRate < 30 ? 30 : segmentsPollingRate,
-      impressionsPushRate: impressionsPushRate < 30 ? 30 : impressionsPushRate,
-      eventsPushRate: eventsPushRate < 30 ? 30 : eventsPushRate,
+      featureFlagsPollingRate: rate('featureFlagsPollingRate',
+          featureFlagsPollingRate, _defaultFeatureFlagsPollingRate),
+      segmentsPollingRate: rate('segmentsPollingRate', segmentsPollingRate,
+          _defaultSegmentsPollingRate),
+      impressionsPushRate: rate('impressionsPushRate', impressionsPushRate,
+          _defaultImpressionsPushRate),
+      eventsPushRate:
+          rate('eventsPushRate', eventsPushRate, _defaultEventsPushRate),
       readyTimeout: readyTimeout < 0 ? 0 : readyTimeout,
       serviceEndpoints: serviceEndpoints,
       streamingEnabled: streamingEnabled,
@@ -103,13 +132,17 @@ final class SplitClientConfig {
   final ImpressionsMode impressionsMode;
   final ConsentStatus userConsent;
   final ImpressionListener? impressionListener;
+
+  /// SDK log verbosity. Defaults to [LogLevel.none] (silent, spec §14).
   final LogLevel logLevel;
+  final bool installSignalHandler;
 
   const SplitClientConfig({
     this.sync = const SyncConfig(),
     this.impressionsMode = ImpressionsMode.optimized,
     this.userConsent = ConsentStatus.granted,
     this.impressionListener,
-    this.logLevel = LogLevel.info,
+    this.logLevel = LogLevel.none,
+    this.installSignalHandler = true,
   });
 }

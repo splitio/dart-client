@@ -1,4 +1,5 @@
 import 'package:splitio_commons/src/engine/engine.dart';
+import 'package:splitio_commons/src/logger/logger.dart';
 import 'package:splitio_commons/src/models/models.dart' hide EvaluationResult;
 import 'package:splitio_commons/src/storage/storage.dart';
 
@@ -6,14 +7,17 @@ class LocalEvaluator {
   final TargetingEngine _engine;
   final InMemoryRuleStore _ruleStore;
   final InMemoryRuleBasedSegmentStore _rbsStore;
-  final InMemoryMembershipStore _membershipStore;
+  final SegmentMembershipResolver _membershipStore;
+  final SplitLogger? _logger;
 
   LocalEvaluator({
     required TargetingEngine engine,
     required InMemoryRuleStore ruleStore,
     required InMemoryRuleBasedSegmentStore rbsStore,
-    required InMemoryMembershipStore membershipStore,
-  })  : _engine = engine,
+    required SegmentMembershipResolver membershipStore,
+    SplitLogger? logger,
+  })  : _logger = logger,
+        _engine = engine,
         _ruleStore = ruleStore,
         _rbsStore = rbsStore,
         _membershipStore = membershipStore;
@@ -33,7 +37,8 @@ class LocalEvaluator {
         ruleStore: _ruleStore,
         rbsStore: _rbsStore,
         membershipStore: _membershipStore,
-        );
+        logger: _logger,
+      );
 
       return _engine.evaluate(matchingKey, bucketingKey, rule, attributes, ctx);
     } catch (e) {
@@ -53,13 +58,16 @@ class _LocalEvaluationContext implements EvaluationContext {
   final TargetingEngine _engine;
   final InMemoryRuleStore _ruleStore;
   final InMemoryRuleBasedSegmentStore _rbsStore;
-  final InMemoryMembershipStore _membershipStore;
+  final SegmentMembershipResolver _membershipStore;
+  @override
+  final SplitLogger? logger;
 
   _LocalEvaluationContext({
     required TargetingEngine engine,
     required InMemoryRuleStore ruleStore,
     required InMemoryRuleBasedSegmentStore rbsStore,
-    required InMemoryMembershipStore membershipStore,
+    required SegmentMembershipResolver membershipStore,
+    this.logger,
   })  : _engine = engine,
         _ruleStore = ruleStore,
         _rbsStore = rbsStore,

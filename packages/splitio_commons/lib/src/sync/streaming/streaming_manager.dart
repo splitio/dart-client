@@ -7,6 +7,7 @@ import 'package:splitio_commons/src/models/models.dart';
 import 'package:splitio_commons/src/parsing/parsing.dart';
 import 'package:splitio_commons/src/storage/storage.dart';
 
+import '../compression/notification_payload_decoder.dart';
 import '../fetchers/flags_fetcher.dart';
 import '../fetchers/memberships_fetcher.dart';
 import 'clock.dart';
@@ -21,6 +22,7 @@ import 'sse_connection.dart';
 import 'sse_uri_builder.dart';
 import 'streaming_effect.dart';
 import 'streaming_event.dart';
+import 'streaming_fetch_coordinators.dart';
 import 'streaming_policy.dart';
 import 'streaming_state.dart';
 import 'sync_delay_calculator.dart';
@@ -55,17 +57,47 @@ class StreamingManager {
   /// delay from its `expiresAt` when [ScheduleTokenRefresh] runs.
   JwtCredential? _lastJwt;
 
+  /// [membershipsFetcher] and [membershipStore] are optional: server-side has
+  /// no per-key memberships (spec Axis 3, §17.2). When absent, MEMBERSHIPS_*
+  /// notifications are ignored and catch-up skips the memberships fetch.
+  ///
+  /// [allSegmentsFetcher] is optional and only wired on server-side topology
+  /// (e.g. `SegmentChangesFetcher.fetch`, which refreshes every registered
+  /// segment): catch-up (§11.3) runs it after the flags fetch completes, so
+  /// segment stores stay fresh while `SyncManager` has stopped its
+  /// segments poll timer during push-up.
+  ///
+  /// [onFlagsUpdated] fires with the affected flag name(s) whenever a flag
+  /// change is applied — including an in-place `SPLIT_UPDATE`/`SPLIT_KILL`
+  /// apply that never triggers a `/splitChanges` fetch (spec §12.1). Callers
+  /// MUST pass the identical callback wired as `FlagsFetcher.onUpdate` so
+  /// in-place and fetched changes can never drift on what "a flag changed"
+  /// means (`whenUpdated`/SDK_UPDATE emission, and on server-side, segment
+  /// registration).
+  ///
+  /// [rbsStore], [segmentFetcherWithOptions] and [segmentCursor] back the
+  /// `rbs`/per-segment on-demand fetch coordinators built by
+  /// [buildOnDemandCoordinators] (spec §10.2); the latter two are server-side
+  /// only — when either is absent, `SEGMENT_UPDATE` falls back to
+  /// [segmentFetcher] (plain single fetch, unchanged).
   StreamingManager({
     required StreamingTransport transport,
     required AuthProvider authProvider,
     required FlagsFetcher flagsFetcher,
-    required MembershipsFetcher membershipsFetcher,
+    MembershipsFetcher? membershipsFetcher,
+    Future<bool> Function(String segmentName)? segmentFetcher,
+    Future<bool> Function(String segmentName, {bool noCache, int? till})?
+        segmentFetcherWithOptions,
+    int Function(String segmentName)? segmentCursor,
+    Future<bool> Function()? allSegmentsFetcher,
     required InMemoryRuleStore ruleStore,
-    required MembershipStore membershipStore,
+    required InMemoryRuleBasedSegmentStore rbsStore,
+    MembershipStore? membershipStore,
     required Uri streamingBaseUri,
     required SplitLogger logger,
     RuleParser? ruleParser,
     MembershipPayloadDecoder decoder = const MembershipPayloadDecoder(),
+    NotificationPayloadDecoder? payloadDecoder,
     NotificationProcessor notificationProcessor = const NotificationProcessor(),
     SyncDelayCalculator syncDelayCalculator = const SyncDelayCalculator(),
     Scheduler scheduler = const SystemScheduler(),
@@ -80,14 +112,36 @@ class StreamingManager {
     void Function()? onDisconnected,
     void Function(SyncMode mode, SyncModeChangeReason reason)?
         onSyncModeChanged,
+    void Function(List<String> changedFlags)? onFlagsUpdated,
   }) : _log = logger {
+    final coordinators = buildOnDemandCoordinators(
+      ffCursor: ruleStore.changeNumber,
+      rbsCursor: rbsStore.changeNumber,
+      flagsFetch: flagsFetcher.fetchWithOptions,
+      scheduler: scheduler,
+      logger: logger,
+      segmentFetcherWithOptions: segmentFetcherWithOptions,
+      segmentCursor: segmentCursor,
+    );
     _feedRouter = FeedUpdateRouter(
       flagsFetcher: flagsFetcher,
       membershipsFetcher: membershipsFetcher,
-      flagStrategy:
-          FlagUpdateStrategy(ruleStore: ruleStore, parser: ruleParser),
-      membershipStrategy:
-          MembershipUpdateStrategy(store: membershipStore, decoder: decoder),
+      segmentFetcher: segmentFetcher,
+      allSegmentsFetcher: allSegmentsFetcher,
+      segmentCoordinator: coordinators.segment,
+      ffCoordinator: coordinators.ff,
+      rbsCoordinator: coordinators.rbs,
+      flagStrategy: FlagUpdateStrategy(
+        ruleStore: ruleStore,
+        parser: ruleParser,
+        onApplied: onFlagsUpdated,
+        payloadDecoder: payloadDecoder,
+        logger: logger,
+      ),
+      membershipStrategy: membershipStore == null
+          ? null
+          : _membershipStrategy(
+              membershipStore, decoder, payloadDecoder, logger),
       syncDelayCalculator: syncDelayCalculator,
       scheduler: scheduler,
       matchingKeys: matchingKeys ?? (() => const []),
@@ -149,8 +203,13 @@ class StreamingManager {
   /// Begins streaming: drives the FSM `Start` and executes its effects.
   Future<void> start() => _apply(const Start());
 
-  /// Stops streaming permanently for this request. Idempotent.
-  Future<void> stop() => _apply(const Stop());
+  /// Stops streaming permanently for this request. Idempotent. Also cancels
+  /// every on-demand fetch coordinator's pending retry timer (Factory
+  /// Lifecycle Rules) so none outlives the manager.
+  Future<void> stop() async {
+    await _apply(const Stop());
+    _feedRouter.dispose();
+  }
 
   // --- FSM driving ----------------------------------------------------------
 
@@ -181,3 +240,18 @@ class StreamingManager {
     }
   }
 }
+
+/// Builds the membership-side strategy sharing the manager's payload decoder
+/// and logger (kept out of [StreamingManager] to respect the class-size limit).
+MembershipUpdateStrategy _membershipStrategy(
+  MembershipStore store,
+  MembershipPayloadDecoder decoder,
+  NotificationPayloadDecoder? payloadDecoder,
+  SplitLogger logger,
+) =>
+    MembershipUpdateStrategy(
+      store: store,
+      decoder: decoder,
+      payloadDecoder: payloadDecoder,
+      logger: logger,
+    );

@@ -17,7 +17,7 @@ final class GreaterThanOrEqualToMatcher extends Matcher {
       if (v == null || c == null) return false;
       return v >= c;
     }
-    final v = asLong(attributeValue);
+    final v = asNumber(attributeValue);
     return v != null && v >= value;
   }
 }

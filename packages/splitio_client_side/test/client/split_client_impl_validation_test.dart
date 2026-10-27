@@ -53,6 +53,7 @@ SplitClientImpl _buildClient({
 }) {
   final em = eventsManager ?? EventsManager();
   final impressions = ImpressionsManager(
+    sdkVersion: 'dart_test-1.0.0',
     strategy: NoneImpressionStrategy(
       counter: ImpressionsCounter(),
       tracker: UniqueKeysTracker(),
@@ -140,11 +141,11 @@ void main() {
   });
 
   group('SplitClientImpl.getTreatments — validation', () {
-    test('returns [] on empty flags list', () {
+    test('returns {} on empty flags list', () {
       final fake = _FakeEvaluator();
       final client =
           _buildClient(key: const Key(matchingKey: 'user_a'), fakeEval: fake);
-      expect(client.getTreatments(<String>[]), <String>[]);
+      expect(client.getTreatments(<String>[]), <String, String>{});
       expect(fake.callCount, 0);
     });
 
@@ -186,11 +187,11 @@ void main() {
   });
 
   group('SplitClientImpl.getTreatmentsByFlagSets — validation', () {
-    test('returns [] on empty flag-set list', () {
+    test('returns {} on empty flag-set list', () {
       final fake = _FakeEvaluator();
       final client =
           _buildClient(key: const Key(matchingKey: 'user_a'), fakeEval: fake);
-      expect(client.getTreatmentsByFlagSets(<String>[]), <String>[]);
+      expect(client.getTreatmentsByFlagSets(<String>[]), <String, String>{});
       expect(fake.callCount, 0);
     });
   });

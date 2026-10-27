@@ -1,6 +1,7 @@
 import 'package:splitio_commons/src/core/core.dart';
 
 import '../matcher.dart';
+import 'semver_attribute.dart';
 
 final class InListSemverMatcher extends Matcher {
   final List<String> versions;
@@ -9,7 +10,7 @@ final class InListSemverMatcher extends Matcher {
   @override
   bool match(Object? value, MatchingContext ctx) {
     if (value is! String) return false;
-    final v = Semver.build(value);
+    final v = parseAttributeSemver(value, ctx, 'IN_LIST_SEMVER');
     if (v == null) return false;
     final normalized = v.version();
     for (final ver in versions) {

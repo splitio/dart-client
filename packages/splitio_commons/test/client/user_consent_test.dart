@@ -1,4 +1,4 @@
-import 'package:splitio_client_side/src/internal/user_consent.dart';
+import 'package:splitio_commons/src/client/user_consent.dart';
 import 'package:splitio_commons/src/models/models.dart';
 import 'package:test/test.dart';
 

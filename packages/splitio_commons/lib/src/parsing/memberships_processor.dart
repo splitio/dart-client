@@ -7,7 +7,10 @@ class MembershipsProcessor {
     required MembershipStore membershipStore,
   }) : _membershipStore = membershipStore;
 
-  void processMemberships(
+  /// Applies the response to [key]'s membership and returns whether it
+  /// actually changed the key's mySegments or largeSegments set (used to
+  /// drive `whenUpdated()`, spec §4.6/§8.2).
+  bool processMemberships(
     Map<String, dynamic> response,
     String key,
   ) {
@@ -28,7 +31,7 @@ class MembershipsProcessor {
 
     final cn = (ms?['cn'] as int?) ?? (ls?['cn'] as int?) ?? -1;
 
-    _membershipStore.applyMembership(
+    return _membershipStore.applyMembership(
       key,
       MembershipChange(
         changeNumber: cn,

@@ -1,16 +1,15 @@
 import 'dart:async';
 
-import 'package:splitio_commons/src/http_client/http_client.dart';
 import 'package:splitio_commons/src/logger/logger.dart';
-import 'package:splitio_commons/src/models/models.dart';
-import 'package:splitio_commons/src/storage/storage.dart';
+import 'package:splitio_commons/src/sync/polling/polling_manager.dart';
 import 'package:splitio_commons/src/sync/sync.dart';
 
+/// Flavor-agnostic sync coordinator shared by the client-side and server-side
+/// SDKs. Decides *when* to poll, stream and run recorders; the injected
+/// [PollingManager] decides *what* polling fetches (spec §8.4, §10).
 class SyncManager {
-  final FlagsFetcher _flagsFetcher;
-  final MembershipsFetcher _membershipsFetcher;
+  final PollingManager _polling;
   final List<Recorder> _recorders;
-  final SyncConfig _config;
   final SplitLogger _log;
 
   /// Optional streaming coordinator (task 4.7). When null, [SyncManager] is
@@ -18,81 +17,36 @@ class SyncManager {
   /// compatible for every existing construction site.
   final StreamingManager? _streamingManager;
 
-  Timer? _rulesTimer;
-  final Map<String, Timer> _membershipsTimers = {};
-  bool _polling = false;
+  /// Set at the start of [stop]. Once true, [startPolling] (and therefore
+  /// [onStreamingDown]) is a no-op — guards against a push-down callback
+  /// (triggered by [stop] itself tearing down a streaming connection that was
+  /// up) racing the poll-timer cancellation and restarting timers that would
+  /// otherwise outlive [stop].
+  bool _stopped = false;
 
   SyncManager({
-    required SplitHttpClient httpClient,
-    required InMemoryRuleStore ruleStore,
-    required InMemoryRuleBasedSegmentStore rbsStore,
-    required InMemoryMembershipStore membershipStore,
-    required SyncConfig config,
-    required String baseUrl,
+    required PollingManager polling,
     required SplitLogger logger,
-    required FlagsFetcher flagsFetcher,
-    required MembershipsFetcher membershipsFetcher,
     List<Recorder> recorders = const [],
     StreamingManager? streamingManager,
-  })  : _config = config,
+  })  : _polling = polling,
         _log = logger,
-        _flagsFetcher = flagsFetcher,
-        _membershipsFetcher = membershipsFetcher,
         _recorders = recorders,
         _streamingManager = streamingManager;
 
   /// Whether poll timers are currently active (test/observation hook).
-  bool get isPolling => _polling;
+  bool get isPolling => _polling.isRunning;
 
-  /// Number of live poll timers: the rules timer plus one per bound key
-  /// (test/observation hook — used to assert no timer leaks across
-  /// streaming up/down cycles).
-  int get activePollTimerCount =>
-      (_rulesTimer != null ? 1 : 0) + _membershipsTimers.length;
-
-  Future<bool> initialSync(String matchingKey) async {
-    _membershipsFetcher.bindKey(matchingKey);
-    _log.debug('Starting initial sync for key: $matchingKey');
-
-    final results = await Future.wait([
-      _flagsFetcher.fetch(),
-      _membershipsFetcher.fetchForKey(matchingKey),
-    ]);
-
-    final rulesOk = results[0];
-    final membershipsOk = results[1];
-
-    if (!rulesOk || !membershipsOk) {
-      if (!rulesOk) _log.error('Initial targeting rules fetch failed');
-      if (!membershipsOk) _log.error('Initial memberships fetch failed');
-      return false;
-    }
-
-    _log.info('Initial sync complete');
-    return true;
-  }
-
-  Future<bool> syncMembershipsFor(String matchingKey) {
-    _membershipsFetcher.bindKey(matchingKey);
-    if (_polling) _startMembershipsTimerFor(matchingKey);
-    return _membershipsFetcher.fetchForKey(matchingKey);
-  }
+  /// Fetches every feed once via the injected [PollingManager] (spec §8.1).
+  Future<bool> initialSync() => _polling.syncAll();
 
   void startPolling() {
-    _log.debug(
-        'Starting polling (rules: ${_config.featureFlagsPollingRate}s, memberships: ${_config.segmentsPollingRate}s)');
-    _polling = true;
-    // Idempotent: cancel any existing rules timer before recreating so repeated
-    // startPolling() calls (e.g. streaming down → up → down cycles) never leak a
-    // timer. Membership timers already dedup via containsKey.
-    _rulesTimer?.cancel();
-    _rulesTimer = Timer.periodic(
-      Duration(seconds: _config.featureFlagsPollingRate),
-      (_) => _flagsFetcher.fetch(),
-    );
-    for (final key in _membershipsFetcher.boundKeys) {
-      _startMembershipsTimerFor(key);
-    }
+    // Defensive: no-op once stopped, even if called directly.
+    if (_stopped) return;
+    // True idempotency (§11.3): the polling manager's start() is a no-op
+    // while already running, so repeated calls never touch existing timers.
+    if (_polling.isRunning) return;
+    _polling.start();
   }
 
   /// Begins syncing in the SDK's preferred mode (spec §8.4). When a
@@ -121,32 +75,17 @@ class SyncManager {
   /// repeatedly.
   void onStreamingUp() {
     _log.debug('Streaming up: stopping poll timers');
-    _cancelPollTimers();
+    _polling.stop();
   }
 
   /// Push (streaming) went down / was disabled (spec §8.4): (re)start polling.
-  /// Idempotent via [startPolling]; repeated calls do not leak timers.
+  /// Idempotent via [startPolling]; repeated calls do not leak timers. No-op
+  /// once [stop] has been called — a push-down callback MUST NOT resurrect
+  /// polling during or after teardown.
   void onStreamingDown() {
+    if (_stopped) return;
     _log.debug('Streaming down: (re)starting polling');
     startPolling();
-  }
-
-  void _cancelPollTimers() {
-    _rulesTimer?.cancel();
-    _rulesTimer = null;
-    for (final t in _membershipsTimers.values) {
-      t.cancel();
-    }
-    _membershipsTimers.clear();
-    _polling = false;
-  }
-
-  void _startMembershipsTimerFor(String key) {
-    if (_membershipsTimers.containsKey(key)) return;
-    _membershipsTimers[key] = Timer.periodic(
-      Duration(seconds: _config.segmentsPollingRate),
-      (_) => _membershipsFetcher.fetchForKey(key),
-    );
   }
 
   void startRecorders() {
@@ -168,8 +107,16 @@ class SyncManager {
 
   /// Stops all sync: cancels poll timers AND stops streaming (if present).
   /// Idempotent — safe to call multiple times.
-  void stop() {
-    _cancelPollTimers();
-    unawaited(_streamingManager?.stop());
+  ///
+  /// Marks the manager stopped BEFORE awaiting streaming shutdown so a
+  /// push-down callback (streaming was up → [StreamingManager.stop] emits
+  /// NotifyPushDisabled → [onStreamingDown]) firing mid-teardown finds
+  /// [onStreamingDown] already a no-op. The poll timers are cancelled again
+  /// after the await as a second, defensive guard.
+  Future<void> stop() async {
+    _stopped = true;
+    _polling.stop();
+    await _streamingManager?.stop();
+    _polling.stop();
   }
 }

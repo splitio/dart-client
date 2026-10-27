@@ -1,14 +1,18 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:splitio_commons/src/models/models.dart';
 import 'package:splitio_commons/src/storage/storage.dart';
 import 'package:splitio_commons/src/sync/sync.dart';
+
+import 'batch_submitter.dart';
 
 class ImpressionsRecorder extends Recorder {
   static const int _batchSize = 500;
 
   final ImpressionsStore _store;
   final ImpressionsMode _mode;
+  final BatchSubmitter<KeyImpression> _submitter;
 
   ImpressionsRecorder({
     required ImpressionsStore store,
@@ -18,10 +22,14 @@ class ImpressionsRecorder extends Recorder {
     required super.pushRateSeconds,
     required super.log,
   })  : _store = store,
-        _mode = mode;
+        _mode = mode,
+        _submitter = BatchSubmitter(log: log, dataTypeName: 'impressions');
+
+  @override
+  void clearRetained() => _submitter.clear();
 
   Future<void> flush() async {
-    final impressions = _store.popAll();
+    final impressions = _submitter.prependRetained(_store.popAll());
     if (impressions.isEmpty) {
       log.verbose('ImpressionsRecorder: nothing to flush');
       return;
@@ -34,18 +42,16 @@ class ImpressionsRecorder extends Recorder {
           ? impressions.length
           : i + _batchSize;
       final batch = impressions.sublist(i, end);
-      final payload = _groupByFeature(batch);
-      try {
-        await httpClient.post(
+      await _submitter.submit(
+        batch,
+        () => httpClient.post(
           '$url/testImpressions/bulk',
-          body: payload,
+          body: _groupByFeature(batch),
           extraHeaders: {
             'SplitSDKImpressionsMode': _mode.name.toUpperCase(),
           },
-        );
-      } catch (e) {
-        log.error('Failed to post impressions batch: $e');
-      }
+        ),
+      );
     }
   }
 
@@ -57,10 +63,12 @@ class ImpressionsRecorder extends Recorder {
         'k': imp.keyName,
         't': imp.treatment,
         'm': imp.time,
-        'c': imp.changeNumber,
+        if (imp.changeNumber != null) 'c': imp.changeNumber,
         'r': imp.label,
         if (imp.bucketingKey != null) 'b': imp.bucketingKey,
         if (imp.pt != null) 'pt': imp.pt,
+        if (imp.properties != null && imp.properties!.isNotEmpty)
+          'properties': jsonEncode(imp.properties),
       });
     }
     return grouped.entries

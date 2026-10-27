@@ -15,6 +15,14 @@ void main() {
       await f.destroy();
     });
 
+    test('returns NoOp on whitespace-only sdkKey', () async {
+      final f = SplitFactory.create(
+          '   ', const SplitClientConfig(), const Key(matchingKey: 'k'));
+      expect(
+          f.client(const Key(matchingKey: 'k')).getTreatment('any'), 'control');
+      await f.destroy();
+    });
+
     test('returns NoOp on empty matchingKey', () async {
       final f = SplitFactory.create(
           'sdk-key', const SplitClientConfig(), const Key(matchingKey: ''));
@@ -33,21 +41,44 @@ void main() {
   });
 
   group('SplitFactory NoOp — whenX on invalid factory', () {
-    test('NoOp client whenReady() completes normally', () async {
+    test('NoOp client whenReady() never completes', () async {
       final f = SplitFactory.create(
           '', const SplitClientConfig(), const Key(matchingKey: 'k'));
       final client = f.client();
-      await expectLater(client.whenReady(), completes);
+      await expectLater(
+          client.whenReady().timeout(const Duration(milliseconds: 200)),
+          throwsA(isA<TimeoutException>()),
+          reason: "A NoOp client's whenReady() MUST NOT complete (spec §7)");
       await f.destroy();
     });
 
-    test('NoOp client whenTimeout() completes normally', () async {
+    test('NoOp client whenTimeout() completes after readyTimeout', () async {
       final f = SplitFactory.create(
-          '', const SplitClientConfig(), const Key(matchingKey: 'k'));
+          '',
+          const SplitClientConfig(sync: SyncConfig(readyTimeout: 1)),
+          const Key(matchingKey: 'k'));
       final client = f.client();
-      await expectLater(client.whenTimeout(), completes);
+      await expectLater(
+          client.whenTimeout().timeout(const Duration(seconds: 3)), completes,
+          reason: "A NoOp client's whenTimeout() MUST complete after "
+              'readyTimeout (spec §7, §8.2)');
       await f.destroy();
-    });
+    }, timeout: const Timeout(Duration(seconds: 10)));
+
+    test(
+        'NoOp factory destroy() before readyTimeout prevents whenTimeout '
+        'from firing', () async {
+      final f = SplitFactory.create(
+          '',
+          const SplitClientConfig(sync: SyncConfig(readyTimeout: 1)),
+          const Key(matchingKey: 'k'));
+      final client = f.client();
+      await f.destroy();
+      await expectLater(
+          client.whenTimeout().timeout(const Duration(seconds: 2)),
+          throwsA(isA<TimeoutException>()),
+          reason: 'destroy() before readyTimeout MUST cancel the timer');
+    }, timeout: const Timeout(Duration(seconds: 10)));
 
     test('NoOp client whenUpdated() returns empty stream', () async {
       final f = SplitFactory.create(
@@ -152,7 +183,8 @@ void main() {
   });
 
   group('SplitFactory — String key shorthand', () {
-    test('create with String bootstrap key returns a working factory (not NoOp)',
+    test(
+        'create with String bootstrap key returns a working factory (not NoOp)',
         () async {
       final f = SplitFactory.create(
           'sdk-key', const SplitClientConfig(), 'CUSTOMER_ID');
@@ -186,15 +218,95 @@ void main() {
       await f.destroy();
     });
 
-    test('factory.client(invalidType) returns the bootstrap client, not NoOp',
+    test('factory.client(invalidType) returns a NoOp client, not bootstrap',
         () async {
       final f = SplitFactory.create(
           'sdk-key', const SplitClientConfig(), const Key(matchingKey: 'boot'));
       final bootstrap = f.client();
-      final viaInvalid = f.client(42);
-      expect(identical(viaInvalid, bootstrap), isTrue,
-          reason:
-              'Invalid-type key on client() MUST behave as if called with no argument');
+      final viaInvalid = f.client(<int>[1]);
+      expect(identical(viaInvalid, bootstrap), isFalse);
+      expect(viaInvalid.getTreatment('any'), 'control');
+      expect(viaInvalid.track('user', 'evt'), isFalse);
+      await f.destroy();
+    });
+
+    test('factory.client(empty/whitespace/over-length) returns NoOp clients',
+        () async {
+      final f = SplitFactory.create(
+          'sdk-key', const SplitClientConfig(), const Key(matchingKey: 'boot'));
+      final bootstrap = f.client();
+      for (final bad in <Object>[
+        '',
+        '   ',
+        'x' * 251,
+        const Key(matchingKey: 'ok', bucketingKey: ' ')
+      ]) {
+        final c = f.client(bad);
+        expect(identical(c, bootstrap), isFalse);
+        expect(c.getTreatment('any'), 'control');
+      }
+      await f.destroy();
+    });
+
+    test(
+        'NoOp client from an invalid key: whenReady never completes, destroy '
+        'cancels its timeout', () async {
+      final f = SplitFactory.create(
+          'sdk-key', const SplitClientConfig(), const Key(matchingKey: 'boot'));
+      final c = f.client('');
+      var ready = false;
+      unawaited(c.whenReady().then((_) => ready = true));
+      await c.destroy();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(ready, isFalse);
+      await f.destroy();
+    });
+
+    test('every invalid key resolves to one shared NoOp client', () async {
+      final f = SplitFactory.create(
+          'sdk-key', const SplitClientConfig(), const Key(matchingKey: 'boot'));
+      final first = f.client('');
+      for (final bad in <Object>[
+        '   ',
+        'x' * 251,
+        <int>[1]
+      ]) {
+        expect(identical(f.client(bad), first), isTrue);
+      }
+      // Like a destroyed real client (spec §8.5), the shared NoOp stays
+      // cached after its destroy() — no fresh instance is allocated.
+      await first.destroy();
+      expect(identical(f.client(''), first), isTrue);
+      await f.destroy();
+    });
+
+    test(
+        'a NoOp client first requested after destroy() never fires '
+        'whenTimeout', () async {
+      final f = SplitFactory.create(
+          'sdk-key',
+          const SplitClientConfig(sync: SyncConfig(readyTimeout: 1)),
+          const Key(matchingKey: 'boot'));
+      await f.destroy();
+      await expectLater(
+          f.client('').whenTimeout().timeout(const Duration(seconds: 2)),
+          throwsA(isA<TimeoutException>()));
+    }, timeout: const Timeout(Duration(seconds: 10)));
+
+    test('factory.client(num) is a distinct client keyed by toString()',
+        () async {
+      final f = SplitFactory.create(
+          'sdk-key', const SplitClientConfig(), const Key(matchingKey: 'boot'));
+      final viaNum = f.client(42);
+      expect(identical(viaNum, f.client()), isFalse);
+      expect(identical(viaNum, f.client('42')), isTrue);
+      await f.destroy();
+    });
+
+    test('factory.client(null) returns the bootstrap client', () async {
+      final f = SplitFactory.create(
+          'sdk-key', const SplitClientConfig(), const Key(matchingKey: 'boot'));
+      expect(identical(f.client(null), f.client()), isTrue);
       await f.destroy();
     });
   });

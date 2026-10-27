@@ -3,8 +3,6 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import '../core/sdk_version.dart';
-
 class SplitHttpResponse {
   final int statusCode;
   final String body;
@@ -21,14 +19,17 @@ class SplitHttpClient {
   final http.Client _client;
   final String _apiKey;
   final Duration _timeout;
+  final String _sdkVersion;
 
   SplitHttpClient({
     required String apiKey,
     http.Client? client,
     Duration timeout = const Duration(seconds: 30),
+    required String sdkVersion,
   })  : _apiKey = apiKey,
         _client = client ?? http.Client(),
-        _timeout = timeout;
+        _timeout = timeout,
+        _sdkVersion = sdkVersion;
 
   Future<SplitHttpResponse> get(
     String url, {
@@ -71,7 +72,7 @@ class SplitHttpClient {
 
   Map<String, String> _headers() => {
         'Authorization': 'Bearer $_apiKey',
-        'SplitSDKVersion': sdkVersion,
+        'SplitSDKVersion': _sdkVersion,
       };
 
   void close() => _client.close();

@@ -23,3 +23,6 @@ examples/bin/local.dart
 docs/audits
 docs/reviews
 docs/superpowers
+docs/research
+docs/spec
+docs/architecture

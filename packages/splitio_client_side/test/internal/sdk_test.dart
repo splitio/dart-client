@@ -30,9 +30,10 @@ void main() {
         final client = factory.client(const Key(matchingKey: 'test'));
         final results = client.getTreatments(['flag_a', 'flag_b', 'flag_c']);
         expect(results, hasLength(3));
-        for (final r in results) {
+        for (final r in results.values) {
           expect(r, equals('control'));
         }
+        expect(results.keys.toSet(), {'flag_a', 'flag_b', 'flag_c'});
       });
 
       test('NoOp client getTreatmentsByFlagSets returns empty', () {

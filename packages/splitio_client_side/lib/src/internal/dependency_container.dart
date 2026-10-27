@@ -2,7 +2,8 @@ import 'dart:async';
 import 'package:splitio_commons/src/auth/jwt_auth_provider.dart';
 import 'package:splitio_commons/src/engine/targeting_engine.dart';
 import 'package:splitio_commons/src/event_tracker/events_tracker.dart';
-import 'package:splitio_commons/src/events/events_manager.dart';
+import 'client_readiness.dart';
+import '../version.dart';
 import 'package:splitio_commons/src/http_client/split_http_client.dart';
 import 'package:splitio_commons/src/http_client/streaming_transport_factory.dart';
 import 'package:splitio_commons/src/local/local_evaluator.dart';
@@ -22,6 +23,7 @@ import 'package:splitio_commons/src/storage/rule_based_segment_store.dart';
 import 'package:splitio_commons/src/storage/rule_store.dart';
 import 'package:splitio_commons/src/sync/fetchers/flags_fetcher.dart';
 import 'package:splitio_commons/src/sync/fetchers/memberships_fetcher.dart';
+import 'package:splitio_commons/src/sync/polling/polling_manager_cs.dart';
 import 'package:splitio_commons/src/impressions/unique_keys_tracker.dart';
 import 'package:splitio_commons/src/sync/recorders/events_recorder.dart';
 import 'package:splitio_commons/src/sync/recorders/recorder.dart';
@@ -31,8 +33,8 @@ import 'package:splitio_commons/src/sync/recorders/unique_keys_recorder.dart';
 import 'package:splitio_commons/src/sync/streaming/streaming_manager.dart';
 import 'package:splitio_commons/src/sync/sync_manager.dart';
 import 'package:splitio_commons/src/event_tracker/events_store.dart';
-import 'split_manager.dart';
-import 'user_consent.dart';
+import 'package:splitio_commons/src/client/split_manager.dart';
+import 'package:splitio_commons/src/client/user_consent.dart';
 
 // LOC-exemption: DI composition root — inherently linear object-graph wiring; splitting adds indirection without reducing complexity. Approved 2026-07-22.
 class DependencyContainer {
@@ -42,11 +44,14 @@ class DependencyContainer {
   final InMemoryMembershipStore membershipStore;
   final InMemoryImpressionsStore impressionsStore;
   final InMemoryEventsStore eventsStore;
-  final EventsManager eventsManager;
   final EventsTracker eventsTracker;
   final UserConsentManager userConsent;
   final SplitHttpClient httpClient;
   final SyncManager syncManager;
+
+  /// Client-side polling strategy used by [syncManager]; exposed so the
+  /// factory can sync memberships for additional keys.
+  final PollingManagerCS pollingManager;
   final LocalEvaluator evaluator;
   final ImpressionsManager impressions;
   final SplitManagerImpl manager;
@@ -69,11 +74,11 @@ class DependencyContainer {
     required this.membershipStore,
     required this.impressionsStore,
     required this.eventsStore,
-    required this.eventsManager,
     required this.eventsTracker,
     required this.userConsent,
     required this.httpClient,
     required this.syncManager,
+    required this.pollingManager,
     required this.evaluator,
     required this.impressions,
     required this.manager,
@@ -82,8 +87,14 @@ class DependencyContainer {
     JwtAuthProvider? authProvider,
   }) : _authProvider = authProvider;
 
-  factory DependencyContainer.build(String sdkKey, SplitClientConfig config) {
-    final syncConfig = config.sync.normalized();
+  factory DependencyContainer.build(
+    String sdkKey,
+    SplitClientConfig config, {
+    required String bootstrapKey,
+    ClientReadiness? readiness,
+    bool Function()? isDestroyed,
+  }) {
+    final syncConfig = config.sync.normalized(serverSide: false);
     final endpoints = syncConfig.serviceEndpoints ?? const ServiceEndpoints();
     final baseUrl = endpoints.resolvedSdkUrl;
     final log = SplitLogger(level: config.logLevel);
@@ -91,9 +102,8 @@ class DependencyContainer {
     final ruleStore = InMemoryRuleStore();
     final rbsStore = InMemoryRuleBasedSegmentStore();
     final membershipStore = InMemoryMembershipStore();
-    final eventsManager = EventsManager();
     final userConsent = UserConsentManager(initialStatus: config.userConsent);
-    final httpClient = SplitHttpClient(apiKey: sdkKey);
+    final httpClient = SplitHttpClient(apiKey: sdkKey, sdkVersion: sdkVersion);
     final engine = TargetingEngine();
 
     final evaluator = LocalEvaluator(
@@ -101,6 +111,7 @@ class DependencyContainer {
       ruleStore: ruleStore,
       rbsStore: rbsStore,
       membershipStore: membershipStore,
+      logger: log,
     );
     final impressionsStore = InMemoryImpressionsStore();
     final observer = ImpressionsObserver();
@@ -125,13 +136,26 @@ class DependencyContainer {
         listener: config.impressionListener,
         consentProvider: () => userConsent.status,
         strategy: strategy,
-        log: log);
+        log: log,
+        sdkVersion: sdkVersion);
     final ruleParser = RuleParser();
     final splitChangeProcessor = SplitChangeProcessor(
       parser: ruleParser,
       rbsStore: rbsStore,
       ruleStore: ruleStore,
     );
+    // Per-client readiness and update routing (spec §8.2) is delegated to
+    // [readiness]. flagsFetcher and membershipsFetcher below are shared with
+    // both SyncManager (polling/initial sync) and StreamingManager
+    // (catch-up), so wiring their callbacks here covers every sync path.
+    // The post-apply side effect a flag change performs regardless of HOW
+    // it arrived: a fetched `/splitChanges` diff AND an in-place
+    // `SPLIT_UPDATE`/`SPLIT_KILL` streaming apply (spec §12.1) MUST both
+    // emit `whenUpdated`/SDK_UPDATE. Shared by reference between
+    // `flagsFetcher.onUpdate` below and `StreamingManager.onFlagsUpdated`
+    // so the two paths can never drift.
+    void onFlagsChanged(List<String> flags) => readiness?.onFlagsChanged(flags);
+
     final flagsFetcher = FlagsFetcher(
       httpClient: httpClient,
       log: log,
@@ -139,7 +163,8 @@ class DependencyContainer {
       processor: splitChangeProcessor,
       ruleStore: ruleStore,
       rbsStore: rbsStore,
-      onUpdate: (flags) => eventsManager.notifyUpdate(flags),
+      onUpdate: onFlagsChanged,
+      onResult: (success) => readiness?.onRulesResult(success),
     );
     final membershipsProcessor = MembershipsProcessor(
       membershipStore: membershipStore,
@@ -149,8 +174,12 @@ class DependencyContainer {
       log: log,
       baseUrl: baseUrl,
       processor: membershipsProcessor,
+      onKeyResult: (key, success) =>
+          readiness?.onMembershipsResult(key, success),
+      onUpdate: (key) => readiness?.onMembershipsChanged(key),
     );
-    final manager = SplitManagerImpl(ruleStore: ruleStore, logger: log);
+    final manager = SplitManagerImpl(
+        ruleStore: ruleStore, logger: log, isDestroyed: isDestroyed);
     final eventsUrl = endpoints.resolvedEventsUrl;
     final telemetryUrl = endpoints.resolvedTelemetryUrl;
     final impressionsPushRate = config.impressionsMode == ImpressionsMode.debug
@@ -197,12 +226,14 @@ class DependencyContainer {
         flagsFetcher: flagsFetcher,
         membershipsFetcher: membershipsFetcher,
         ruleStore: ruleStore,
+        rbsStore: rbsStore,
         membershipStore: membershipStore,
         streamingBaseUri: Uri.parse(streamingBaseUrl),
         logger: log,
         matchingKeys: () => membershipsFetcher.boundKeys.toList(),
         onPushEnabled: () => syncManager.onStreamingUp(),
         onPushDisabled: () => syncManager.onStreamingDown(),
+        onFlagsUpdated: onFlagsChanged,
       );
     }
 
@@ -247,24 +278,33 @@ class DependencyContainer {
     }
 
     // §7.2: DECLINED must drop already-queued data, not just pause sending.
+    // This includes each recorder's BatchSubmitter-retained retry batch, not
+    // just the live stores — otherwise a batch retained after a transient
+    // POST failure would still go out on the recorder's next flush.
     userConsent.setOnDeclined(() {
       log.debug('Consent declined — dropping queued impressions/events data');
       impressionsStore.clear();
       eventsStore.clear();
       counter.clear();
       capturedTracker?.clear();
+      for (final recorder in recorders) {
+        recorder.clearRetained();
+      }
     });
 
+    final pollingManager = PollingManagerCS(
+      bootstrapKey: bootstrapKey,
+      flagsFetcher: flagsFetcher,
+      membershipsFetcher: membershipsFetcher,
+      featuresRefreshRate:
+          Duration(seconds: syncConfig.featureFlagsPollingRate),
+      membershipsRefreshRate: Duration(seconds: syncConfig.segmentsPollingRate),
+      logger: log,
+    );
+
     syncManager = SyncManager(
-        httpClient: httpClient,
-        ruleStore: ruleStore,
-        rbsStore: rbsStore,
-        membershipStore: membershipStore,
-        config: syncConfig,
-        baseUrl: baseUrl,
+        polling: pollingManager,
         logger: log,
-        flagsFetcher: flagsFetcher,
-        membershipsFetcher: membershipsFetcher,
         recorders: recorders,
         streamingManager: streamingManager);
 
@@ -275,11 +315,11 @@ class DependencyContainer {
       membershipStore: membershipStore,
       impressionsStore: impressionsStore,
       eventsStore: eventsStore,
-      eventsManager: eventsManager,
       eventsTracker: eventsTracker,
       userConsent: userConsent,
       httpClient: httpClient,
       syncManager: syncManager,
+      pollingManager: pollingManager,
       evaluator: evaluator,
       impressions: impressions,
       manager: manager,
@@ -294,6 +334,5 @@ class DependencyContainer {
     // just cleans up resources. Safe to call multiple times.
     _authProvider?.clearAll();
     httpClient.close();
-    await eventsManager.dispose();
   }
 }

@@ -7,6 +7,7 @@ import 'package:splitio_commons/src/logger/logger.dart';
 import 'package:splitio_commons/src/models/models.dart';
 import 'package:splitio_commons/src/parsing/parsing.dart';
 import 'package:splitio_commons/src/storage/storage.dart';
+import 'package:splitio_commons/src/sync/polling/polling_manager_cs.dart';
 import 'package:splitio_commons/src/sync/sync.dart';
 import 'package:test/test.dart';
 
@@ -33,410 +34,49 @@ JwtCredential _pushCredential() => const JwtCredential(
       connDelaySeconds: 0,
     );
 
-const _validSplitChangesResponse = '''
-{
-  "ff": {
-    "t": 100,
-    "s": -1,
-    "d": [
-      {
-        "name": "my_flag",
-        "trafficTypeName": "user",
-        "killed": false,
-        "defaultTreatment": "off",
-        "conditions": [],
-        "trafficAllocation": 100,
-        "seed": 12345,
-        "algo": 2,
-        "changeNumber": 100,
-        "status": "ACTIVE"
-      }
-    ]
-  },
-  "rbs": {
-    "t": -1,
-    "s": -1,
-    "d": []
-  }
-}
-''';
-
-const _validMembershipsResponse = '''
-{
-  "ms": {
-    "k": ["segment_a", "segment_b"],
-    "cn": 50
-  }
-}
-''';
-
-SyncManager _createSyncManager({
+({SyncManager sync, PollingManagerCS polling}) _createSyncManager({
   required SplitHttpClient httpClient,
-  SyncConfig? config,
-  InMemoryRuleStore? ruleStore,
-  InMemoryRuleBasedSegmentStore? rbsStore,
-  InMemoryMembershipStore? membershipStore,
-  void Function(List<String>)? onUpdate,
   StreamingManager? streamingManager,
 }) {
-  final effectiveRuleStore = ruleStore ?? InMemoryRuleStore();
-  final effectiveRbsStore = rbsStore ?? InMemoryRuleBasedSegmentStore();
-  final effectiveMembershipStore = membershipStore ?? InMemoryMembershipStore();
   final logger = SplitLogger(level: LogLevel.none);
-  const baseUrl = 'https://sdk.split.io/api';
-
-  final ruleParser = RuleParser();
-  final processor = SplitChangeProcessor(
-    parser: ruleParser,
-    ruleStore: effectiveRuleStore,
-    rbsStore: effectiveRbsStore,
-  );
-  final membershipsProcessor = MembershipsProcessor(
-    membershipStore: effectiveMembershipStore,
-  );
-
-  final flagsFetcher = FlagsFetcher(
-    httpClient: httpClient,
-    log: logger,
-    baseUrl: baseUrl,
-    processor: processor,
-    ruleStore: effectiveRuleStore,
-    rbsStore: effectiveRbsStore,
-    onUpdate: onUpdate,
-  );
-  final membershipsFetcher = MembershipsFetcher(
-    httpClient: httpClient,
-    log: logger,
-    baseUrl: baseUrl,
-    processor: membershipsProcessor,
-  );
-
-  return SyncManager(
-    httpClient: httpClient,
-    ruleStore: effectiveRuleStore,
-    rbsStore: effectiveRbsStore,
-    membershipStore: effectiveMembershipStore,
-    config: config ?? const SyncConfig().normalized(),
-    baseUrl: baseUrl,
+  final polling = PollingManagerCS(
+    bootstrapKey: 'user1',
+    flagsFetcher: FlagsFetcher(
+      httpClient: httpClient,
+      log: logger,
+      baseUrl: 'https://sdk.split.io/api',
+      processor: SplitChangeProcessor(
+        parser: RuleParser(),
+        ruleStore: InMemoryRuleStore(),
+        rbsStore: InMemoryRuleBasedSegmentStore(),
+      ),
+      ruleStore: InMemoryRuleStore(),
+      rbsStore: InMemoryRuleBasedSegmentStore(),
+    ),
+    membershipsFetcher: MembershipsFetcher(
+      httpClient: httpClient,
+      log: logger,
+      baseUrl: 'https://sdk.split.io/api',
+      processor:
+          MembershipsProcessor(membershipStore: InMemoryMembershipStore()),
+    ),
+    featuresRefreshRate: Duration(
+        seconds: const SyncConfig().normalized().featureFlagsPollingRate),
+    membershipsRefreshRate:
+        Duration(seconds: const SyncConfig().normalized().segmentsPollingRate),
     logger: logger,
-    flagsFetcher: flagsFetcher,
-    membershipsFetcher: membershipsFetcher,
-    streamingManager: streamingManager,
+  );
+  return (
+    sync: SyncManager(
+      polling: polling,
+      logger: logger,
+      streamingManager: streamingManager,
+    ),
+    polling: polling,
   );
 }
 
 void main() {
-  group('SyncManager', () {
-    test('initialSync fetches rules and memberships then returns true',
-        () async {
-      final mockClient = MockClient((request) async {
-        if (request.url.path.contains('/splitChanges')) {
-          return http.Response(_validSplitChangesResponse, 200);
-        }
-        if (request.url.path.contains('/memberships/')) {
-          return http.Response(_validMembershipsResponse, 200);
-        }
-        return http.Response('Not Found', 404);
-      });
-
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
-      final ruleStore = InMemoryRuleStore();
-      final membershipStore = InMemoryMembershipStore();
-
-      final syncManager = _createSyncManager(
-        httpClient: httpClient,
-        ruleStore: ruleStore,
-        membershipStore: membershipStore,
-      );
-
-      final result = await syncManager.initialSync('user1');
-
-      expect(result, isTrue);
-      expect(ruleStore.get('my_flag'), isNotNull);
-      expect(ruleStore.changeNumber(), equals(100));
-      expect(membershipStore.isInSegment('segment_a', 'user1'), isTrue);
-      expect(membershipStore.isInSegment('segment_b', 'user1'), isTrue);
-      expect(membershipStore.isInSegment('segment_c', 'user1'), isFalse);
-
-      syncManager.stop();
-      httpClient.close();
-    });
-
-    test('initialSync returns false when rules fetch fails', () async {
-      final mockClient = MockClient((request) async {
-        if (request.url.path.contains('/splitChanges')) {
-          return http.Response('Internal Server Error', 500);
-        }
-        if (request.url.path.contains('/memberships/')) {
-          return http.Response(_validMembershipsResponse, 200);
-        }
-        return http.Response('Not Found', 404);
-      });
-
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
-      final syncManager = _createSyncManager(httpClient: httpClient);
-
-      final result = await syncManager.initialSync('user1');
-      expect(result, isFalse);
-
-      syncManager.stop();
-      httpClient.close();
-    });
-
-    test('initialSync returns false when memberships fetch fails', () async {
-      final mockClient = MockClient((request) async {
-        if (request.url.path.contains('/splitChanges')) {
-          return http.Response(_validSplitChangesResponse, 200);
-        }
-        if (request.url.path.contains('/memberships/')) {
-          return http.Response('Internal Server Error', 500);
-        }
-        return http.Response('Not Found', 404);
-      });
-
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
-      final syncManager = _createSyncManager(httpClient: httpClient);
-
-      final result = await syncManager.initialSync('user1');
-      expect(result, isFalse);
-
-      syncManager.stop();
-      httpClient.close();
-    });
-
-    test('initialSync returns false when both fetches fail', () async {
-      final mockClient = MockClient((request) async {
-        return http.Response('Internal Server Error', 500);
-      });
-
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
-      final syncManager = _createSyncManager(httpClient: httpClient);
-
-      final result = await syncManager.initialSync('user1');
-      expect(result, isFalse);
-
-      syncManager.stop();
-      httpClient.close();
-    });
-
-    test('initialSync fetches rules and memberships in parallel', () async {
-      final requestTimestamps = <String, DateTime>{};
-
-      final mockClient = MockClient((request) async {
-        if (request.url.path.contains('/splitChanges')) {
-          requestTimestamps['rules'] = DateTime.now();
-          await Future.delayed(const Duration(milliseconds: 50));
-          return http.Response(_validSplitChangesResponse, 200);
-        }
-        if (request.url.path.contains('/memberships/')) {
-          requestTimestamps['memberships'] = DateTime.now();
-          await Future.delayed(const Duration(milliseconds: 50));
-          return http.Response(_validMembershipsResponse, 200);
-        }
-        return http.Response('Not Found', 404);
-      });
-
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
-      final syncManager = _createSyncManager(httpClient: httpClient);
-
-      final result = await syncManager.initialSync('user1');
-
-      expect(result, isTrue);
-      expect(requestTimestamps['rules'], isNotNull);
-      expect(requestTimestamps['memberships'], isNotNull);
-
-      final diff = requestTimestamps['memberships']!
-          .difference(requestTimestamps['rules']!)
-          .inMilliseconds
-          .abs();
-      expect(diff, lessThan(30),
-          reason: 'Both fetches should start nearly simultaneously');
-
-      syncManager.stop();
-      httpClient.close();
-    });
-
-    test('initialSync returns true on 304 Not Modified', () async {
-      final mockClient = MockClient((request) async {
-        if (request.url.path.contains('/splitChanges')) {
-          return http.Response('', 304);
-        }
-        if (request.url.path.contains('/memberships/')) {
-          return http.Response(_validMembershipsResponse, 200);
-        }
-        return http.Response('Not Found', 404);
-      });
-
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
-      final syncManager = _createSyncManager(httpClient: httpClient);
-
-      final result = await syncManager.initialSync('user1');
-      expect(result, isTrue);
-
-      syncManager.stop();
-      httpClient.close();
-    });
-
-    test('startPolling does not throw', () async {
-      final mockClient = MockClient((request) async {
-        if (request.url.path.contains('/splitChanges')) {
-          return http.Response(_validSplitChangesResponse, 200);
-        }
-        if (request.url.path.contains('/memberships/')) {
-          return http.Response(_validMembershipsResponse, 200);
-        }
-        return http.Response('Not Found', 404);
-      });
-
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
-      final syncManager = _createSyncManager(httpClient: httpClient);
-
-      await syncManager.initialSync('user1');
-
-      // startPolling should not throw
-      expect(() => syncManager.startPolling(), returnsNormally);
-
-      // stop cancels timers without error
-      syncManager.stop();
-      httpClient.close();
-    });
-
-    test('stop cancels polling timers', () async {
-      final mockClient = MockClient((request) async {
-        if (request.url.path.contains('/splitChanges')) {
-          return http.Response(_validSplitChangesResponse, 200);
-        }
-        if (request.url.path.contains('/memberships/')) {
-          return http.Response(_validMembershipsResponse, 200);
-        }
-        return http.Response('Not Found', 404);
-      });
-
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
-      final syncManager = _createSyncManager(httpClient: httpClient);
-
-      await syncManager.initialSync('user1');
-      syncManager.startPolling();
-
-      // Calling stop multiple times should not throw
-      syncManager.stop();
-      syncManager.stop();
-
-      httpClient.close();
-    });
-
-    test('onUpdate callback is invoked when flags change', () async {
-      final changedFlagsList = <List<String>>[];
-
-      final mockClient = MockClient((request) async {
-        if (request.url.path.contains('/splitChanges')) {
-          return http.Response(_validSplitChangesResponse, 200);
-        }
-        if (request.url.path.contains('/memberships/')) {
-          return http.Response(_validMembershipsResponse, 200);
-        }
-        return http.Response('Not Found', 404);
-      });
-
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
-      final syncManager = _createSyncManager(
-        httpClient: httpClient,
-        onUpdate: (flags) => changedFlagsList.add(flags),
-      );
-
-      await syncManager.initialSync('user1');
-
-      expect(changedFlagsList, hasLength(1));
-      expect(changedFlagsList.first, contains('my_flag'));
-
-      syncManager.stop();
-      httpClient.close();
-    });
-
-    test('initialSync sends correct query parameters', () async {
-      Uri? capturedUri;
-
-      final mockClient = MockClient((request) async {
-        if (request.url.path.contains('/splitChanges')) {
-          capturedUri = request.url;
-          return http.Response(_validSplitChangesResponse, 200);
-        }
-        if (request.url.path.contains('/memberships/')) {
-          return http.Response(_validMembershipsResponse, 200);
-        }
-        return http.Response('Not Found', 404);
-      });
-
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
-      final syncManager = _createSyncManager(httpClient: httpClient);
-
-      await syncManager.initialSync('user1');
-
-      expect(capturedUri, isNotNull);
-      expect(capturedUri!.queryParameters['since'], equals('-1'));
-      expect(capturedUri!.queryParameters['rbSince'], equals('-1'));
-      expect(capturedUri!.queryParameters['s'], equals('1.3'));
-
-      syncManager.stop();
-      httpClient.close();
-    });
-
-    test('initialSync fetches memberships at correct URL', () async {
-      String? membershipsPath;
-
-      final mockClient = MockClient((request) async {
-        if (request.url.path.contains('/splitChanges')) {
-          return http.Response(_validSplitChangesResponse, 200);
-        }
-        if (request.url.path.contains('/memberships/')) {
-          membershipsPath = request.url.path;
-          return http.Response(_validMembershipsResponse, 200);
-        }
-        return http.Response('Not Found', 404);
-      });
-
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
-      final syncManager = _createSyncManager(httpClient: httpClient);
-
-      await syncManager.initialSync('test_user');
-
-      expect(membershipsPath, equals('/api/memberships/test_user'));
-
-      syncManager.stop();
-      httpClient.close();
-    });
-
-    test('startPolling twice does not leak the rules timer', () async {
-      final httpClient = SplitHttpClient(
-          apiKey: 'test-key',
-          client: MockClient((r) async => http.Response('{}', 200)));
-      final syncManager = _createSyncManager(httpClient: httpClient);
-
-      syncManager.startPolling();
-      final afterFirst = syncManager.activePollTimerCount;
-      syncManager.startPolling();
-      final afterSecond = syncManager.activePollTimerCount;
-
-      // No leaked rules timer: count is stable across repeated startPolling.
-      expect(afterFirst, equals(1)); // rules timer only (no bound keys)
-      expect(afterSecond, equals(afterFirst));
-
-      syncManager.stop();
-      httpClient.close();
-    });
-  });
-
   group('SyncManager sync-mode switch', () {
     late FakeStreamingTransport transport;
     late SplitHttpClient httpClient;
@@ -475,6 +115,7 @@ void main() {
         flagsFetcher: flagsFetcher,
         membershipsFetcher: membershipsFetcher,
         ruleStore: ruleStore,
+        rbsStore: rbsStore,
         membershipStore: membershipStore,
         streamingBaseUri: Uri.parse('https://streaming.example'),
         logger: logger,
@@ -484,8 +125,14 @@ void main() {
     }
 
     setUp(() {
-      transport = FakeStreamingTransport(statusCode: 200);
+      // keepOpen: true — every retryable failure (including the stream
+      // naturally ending with no lines) now unconditionally drops
+      // connectionDown (§11.3). These tests assert the streaming connection
+      // STAYS up, so the fake transport must not let the empty default
+      // stream end on its own and flip push back down.
+      transport = FakeStreamingTransport(statusCode: 200, keepOpen: true);
       httpClient = SplitHttpClient(
+          sdkVersion: 'dart_test-1.0.0',
           apiKey: 'test-key',
           client: MockClient((r) async => http.Response('{}', 200)));
     });
@@ -494,12 +141,13 @@ void main() {
 
     test('no StreamingManager: startStreaming falls back to startPolling',
         () async {
-      final syncManager = _createSyncManager(httpClient: httpClient);
+      final (sync: syncManager, polling: polling) =
+          _createSyncManager(httpClient: httpClient);
 
       await syncManager.startStreaming();
 
       expect(syncManager.isPolling, isTrue);
-      expect(syncManager.activePollTimerCount, equals(1));
+      expect(polling.activePollTimerCount, equals(1));
 
       syncManager.stop();
     });
@@ -513,10 +161,8 @@ void main() {
         ruleStore: ruleStore,
         membershipStore: membershipStore,
       );
-      final syncManager = _createSyncManager(
+      final (sync: syncManager, polling: polling) = _createSyncManager(
         httpClient: httpClient,
-        ruleStore: ruleStore,
-        membershipStore: membershipStore,
         streamingManager: streaming,
       );
 
@@ -525,20 +171,21 @@ void main() {
 
       expect(transport.connectCount, equals(1));
       expect(syncManager.isPolling, isFalse);
-      expect(syncManager.activePollTimerCount, equals(0));
+      expect(polling.activePollTimerCount, equals(0));
 
       syncManager.stop();
     });
 
     test('onStreamingUp stops poll timers', () async {
-      final syncManager = _createSyncManager(httpClient: httpClient);
+      final (sync: syncManager, polling: polling) =
+          _createSyncManager(httpClient: httpClient);
       syncManager.startPolling();
-      expect(syncManager.activePollTimerCount, greaterThan(0));
+      expect(polling.activePollTimerCount, greaterThan(0));
 
       syncManager.onStreamingUp();
 
       expect(syncManager.isPolling, isFalse);
-      expect(syncManager.activePollTimerCount, equals(0));
+      expect(polling.activePollTimerCount, equals(0));
 
       syncManager.stop();
     });
@@ -550,10 +197,8 @@ void main() {
         ruleStore: ruleStore,
         membershipStore: membershipStore,
       );
-      final syncManager = _createSyncManager(
+      final (sync: syncManager, polling: polling) = _createSyncManager(
         httpClient: httpClient,
-        ruleStore: ruleStore,
-        membershipStore: membershipStore,
         streamingManager: streaming,
       );
 
@@ -566,19 +211,20 @@ void main() {
       // Streaming connection stays up; only poll timers are stopped (§8.4).
       expect(streaming.isPushUp, isTrue);
       expect(syncManager.isPolling, isFalse);
-      expect(syncManager.activePollTimerCount, equals(0));
+      expect(polling.activePollTimerCount, equals(0));
 
       syncManager.stop();
     });
 
     test('onStreamingDown (re)starts polling without duplicating timers',
         () async {
-      final syncManager = _createSyncManager(httpClient: httpClient);
+      final (sync: syncManager, polling: polling) =
+          _createSyncManager(httpClient: httpClient);
 
       syncManager.onStreamingDown();
-      final afterFirst = syncManager.activePollTimerCount;
+      final afterFirst = polling.activePollTimerCount;
       syncManager.onStreamingDown();
-      final afterSecond = syncManager.activePollTimerCount;
+      final afterSecond = polling.activePollTimerCount;
 
       expect(syncManager.isPolling, isTrue);
       expect(afterFirst, equals(1));
@@ -588,17 +234,18 @@ void main() {
     });
 
     test('up→down→up cycle leaves consistent state (no timer leaks)', () async {
-      final syncManager = _createSyncManager(httpClient: httpClient);
+      final (sync: syncManager, polling: polling) =
+          _createSyncManager(httpClient: httpClient);
 
       syncManager.startPolling();
       syncManager.onStreamingUp();
-      expect(syncManager.activePollTimerCount, equals(0));
+      expect(polling.activePollTimerCount, equals(0));
 
       syncManager.onStreamingDown();
-      expect(syncManager.activePollTimerCount, equals(1));
+      expect(polling.activePollTimerCount, equals(1));
 
       syncManager.onStreamingUp();
-      expect(syncManager.activePollTimerCount, equals(0));
+      expect(polling.activePollTimerCount, equals(0));
 
       syncManager.stop();
     });
@@ -610,10 +257,8 @@ void main() {
         ruleStore: ruleStore,
         membershipStore: membershipStore,
       );
-      final syncManager = _createSyncManager(
+      final (sync: syncManager, polling: polling) = _createSyncManager(
         httpClient: httpClient,
-        ruleStore: ruleStore,
-        membershipStore: membershipStore,
         streamingManager: streaming,
       );
 
@@ -625,11 +270,46 @@ void main() {
       syncManager.stop();
       await Future<void>.delayed(Duration.zero);
 
-      expect(syncManager.activePollTimerCount, equals(0));
+      expect(polling.activePollTimerCount, equals(0));
       expect(streaming.isPushUp, isFalse);
 
       // Second stop is safe.
       expect(() => syncManager.stop(), returnsNormally);
+    });
+
+    // Regression: stopping a streaming connection that was UP emits
+    // NotifyPushDisabled (push went down) in the SAME reduce pass as
+    // CloseCurrentSocket, so onStreamingDown() runs synchronously inside
+    // `await streamingManager.stop()`. Without a stopped-guard, that
+    // onStreamingDown() call restarts the poll timers that stop() just
+    // cancelled, and they survive stop() returning.
+    test(
+        'stop() guards against a push-down callback restarting poll timers '
+        'mid-teardown', () async {
+      final ruleStore = InMemoryRuleStore();
+      final membershipStore = InMemoryMembershipStore();
+      final streaming = buildStreamingManager(
+        ruleStore: ruleStore,
+        membershipStore: membershipStore,
+      );
+      final (sync: syncManager, polling: polling) = _createSyncManager(
+        httpClient: httpClient,
+        streamingManager: streaming,
+      );
+
+      await syncManager.startStreaming();
+      await Future<void>.delayed(Duration.zero);
+      expect(streaming.isPushUp, isTrue);
+      expect(polling.activePollTimerCount, equals(0));
+
+      await syncManager.stop();
+
+      expect(streaming.isPushUp, isFalse);
+      expect(polling.activePollTimerCount, equals(0),
+          reason: 'stop() MUST NOT leave a restarted poll timer running: '
+              'stopping an up streaming connection triggers a push-down '
+              'callback (onStreamingDown) that MUST be a no-op once stop() '
+              'has started');
     });
 
     test('stopStreaming stops the injected streaming manager', () async {
@@ -639,10 +319,8 @@ void main() {
         ruleStore: ruleStore,
         membershipStore: membershipStore,
       );
-      final syncManager = _createSyncManager(
+      final (sync: syncManager, polling: polling) = _createSyncManager(
         httpClient: httpClient,
-        ruleStore: ruleStore,
-        membershipStore: membershipStore,
         streamingManager: streaming,
       );
 

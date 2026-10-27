@@ -4,7 +4,9 @@ final class KeyImpression {
   final String? bucketingKey;
   final String treatment;
   final String label;
-  final int changeNumber;
+
+  /// Null when the evaluation had no flag definition (`not ready`).
+  final int? changeNumber;
   final int time;
   int? pt;
   final Map<String, Object?>? properties;
@@ -15,7 +17,7 @@ final class KeyImpression {
     this.bucketingKey,
     required this.treatment,
     required this.label,
-    required this.changeNumber,
+    this.changeNumber,
     required this.time,
     this.pt,
     this.properties,

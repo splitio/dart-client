@@ -2,12 +2,17 @@
 
 ## Purpose
 
-**Inbound freshness coordinator** — Keeps local stores current with the Split backend via polling and SSE streaming. Implements `SyncManager` (sync-mode switch), cursor-aware fetchers, and the full streaming stack: pure FSM (`StreamingPolicy`) separated from its effect runtime (`StreamingManager`). Maps to spec §10–§12.
+**Inbound freshness coordinator** — Keeps local stores current with the Split backend via polling and SSE streaming. Implements one flavor-agnostic `SyncManager` (sync-mode switch) with a per-flavor `PollingManager` strategy, cursor-aware fetchers, and the full streaming stack: pure FSM (`StreamingPolicy`) separated from its effect runtime (`StreamingManager`). Maps to spec §10–§12.
 
 ## Key Files
 
 - `sync.dart` — Library export
-- `sync_manager.dart` — Poll/stream orchestrator + sync-mode switch
+- `sync_manager.dart` — Flavor-agnostic poll/stream orchestrator + sync-mode switch; decides *when* to poll, the injected `PollingManager` decides *what*
+- `polling/polling_manager.dart` — `PollingManager` strategy interface (`syncAll`, `start`, `stop`, `isRunning`)
+- `polling/polling_manager_cs.dart` — CS: flags + per-key memberships (`syncMembershipsFor`)
+- `polling/polling_manager_ss.dart` — SS: flags, then segments via the injected `fetchSegments` (`/segmentChanges` per referenced segment); segments are fetched even when flags fail
+- `compression/notification_payload_decoder.dart` — base64 + `c` → decoded `d` (only place that decodes)
+- `compression/inflate_decompressor.dart` — pure-Dart gzip/zlib `Decompressor` (fflate port, MIT)
 - `task.dart` — Periodic task abstraction
 - `fetchers/flags_fetcher.dart` — Cursor-aware flags fetch (§10)
 - `fetchers/memberships_fetcher.dart` — Cursor-aware memberships fetch (§10)
@@ -36,14 +41,15 @@
 
 - **Internal**: `models`, `logger`, `storage`, `parsing`, `auth`, `http_client`
 - **External**: None
-- **Used by**: `splitio_client_side`
+- **Used by**: `splitio_client_side`, `splitio_server_side`
 
 ## Important Patterns
 
 - **FSM separation**: `StreamingPolicy` is a pure zero-I/O reducer; all mechanism is in `StreamingManager`
 - **Injected time**: reconnect backoff + jitter go through `Scheduler`/`Clock` SPI for deterministic tests
 - **3-axis push gate**: `pushUp = !controlPaused && !occupancyZero && !connectionDown`
-- **Safe fallback**: any decode error or deferred compression (`c=1/2`) → full fetch, never throw
+- **Safe fallback**: any decode error or unknown `c` → full fetch, never throw; a decode error on a non-empty `d` logs one WARNING per notification
+- **Compression**: `NotificationPayloadDecoder` (base64 → `Decompressor`, pure-Dart gzip/zlib in `compression/`) decodes `c`=0/1/2 for SPLIT_UPDATE, BOUNDED and KEY_LIST; `RB_SEGMENT_UPDATE` still always fetches
 - **No `BigInt`** (web compat): key-list hashes compared as decimal strings; bitmap uses low 32 bits
 
 ## DOs
@@ -56,4 +62,4 @@
 
 - Don't make direct HTTP calls — use injected transport/fetchers
 - Don't use `BigInt` or `dart:io`/`dart:html`
-- Don't apply compressed (`c=1/2`) payloads in place — fetch instead
+- Don't decode `d` anywhere but `NotificationPayloadDecoder`; don't apply `RB_SEGMENT_UPDATE` in place (always fetch)

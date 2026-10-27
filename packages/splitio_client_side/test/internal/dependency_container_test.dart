@@ -8,6 +8,7 @@ void main() {
     test('declining consent drops queued impressions and events', () {
       final di = DependencyContainer.build(
         'valid-sdk-key-123',
+        bootstrapKey: 'user1',
         const SplitClientConfig(
           sync: SyncConfig(readyTimeout: 0, streamingEnabled: false),
         ),
@@ -44,6 +45,7 @@ void main() {
     test('constructs a StreamingManager when streaming is enabled', () {
       final di = DependencyContainer.build(
         'valid-sdk-key-123',
+        bootstrapKey: 'user1',
         const SplitClientConfig(
           sync: SyncConfig(readyTimeout: 0),
         ),
@@ -57,6 +59,7 @@ void main() {
     test('leaves streaming null (poll-only) when streaming is disabled', () {
       final di = DependencyContainer.build(
         'valid-sdk-key-123',
+        bootstrapKey: 'user1',
         const SplitClientConfig(
           sync: SyncConfig(readyTimeout: 0, streamingEnabled: false),
         ),
@@ -68,6 +71,7 @@ void main() {
     test('honours a custom streaming endpoint', () {
       final di = DependencyContainer.build(
         'valid-sdk-key-123',
+        bootstrapKey: 'user1',
         const SplitClientConfig(
           sync: SyncConfig(
             readyTimeout: 0,
@@ -83,6 +87,7 @@ void main() {
     test('dispose completes cleanly with streaming enabled', () async {
       final di = DependencyContainer.build(
         'valid-sdk-key-123',
+        bootstrapKey: 'user1',
         const SplitClientConfig(sync: SyncConfig(readyTimeout: 0)),
       );
       await expectLater(di.dispose(), completes);
@@ -95,6 +100,7 @@ void main() {
       // second dispose() must also complete without throwing.
       final di = DependencyContainer.build(
         'valid-sdk-key-123',
+        bootstrapKey: 'user1',
         const SplitClientConfig(sync: SyncConfig(readyTimeout: 0)),
       );
       expect(di.streamingManager, isNotNull);
@@ -105,6 +111,7 @@ void main() {
     test('dispose is idempotent with streaming disabled', () async {
       final di = DependencyContainer.build(
         'valid-sdk-key-123',
+        bootstrapKey: 'user1',
         const SplitClientConfig(
           sync: SyncConfig(readyTimeout: 0, streamingEnabled: false),
         ),

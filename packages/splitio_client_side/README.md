@@ -8,6 +8,13 @@ The Dart SDK is a client-side library. It supports the Dart VM and Flutter acros
 
 It supports **Dart SDK `>=3.0.0 <4.0.0`**.
 
+## Installation
+Add the SDK to your `pubspec.yaml`:
+```yaml
+dependencies:
+  splitio_client_side: ^2.0.0
+```
+
 ## Getting started
 Below is a simple Dart example that describes the instantiation and most basic usage of our SDK:
 ```dart
@@ -15,27 +22,19 @@ Below is a simple Dart example that describes the instantiation and most basic u
 import 'package:splitio_client_side/splitio_client_side.dart';
 
 void main() {
-  // Instantiate the SDK — you can pass either a bare String matching key…
+  // Instantiate the SDK with your SDK key and the key of the current user.
+  // Pass a Key instead of a String if you also need a bucketing key:
+  // const Key(matchingKey: 'CUSTOMER_ID', bucketingKey: 'BUCKETING_KEY').
   final factory = SplitFactory.create(
     'YOUR_SDK_KEY',
     const SplitClientConfig(),
     'CUSTOMER_ID',
   );
 
-  // …or a Key value if you also need a bucketing key.
-  //
-  //   final factory = SplitFactory.create(
-  //     'YOUR_SDK_KEY',
-  //     const SplitClientConfig(),
-  //     const Key(matchingKey: 'CUSTOMER_ID'),
-  //   );
+  // Get the client for that user.
+  final client = factory.client();
 
-  // Get the client instance you'll use — String or Key both work here too.
-  final client = factory.client('CUSTOMER_ID');
-
-  // Subscribe to the SDK-ready event instead of blocking the main flow —
-  // this is the idiomatic client-side pattern (UI stays responsive; the
-  // callback fires once the SDK has synced its rules).
+  // Evaluate once the SDK is ready; the UI stays responsive meanwhile.
   client.whenReady().then((_) {
     final treatment = client.getTreatment('FEATURE_FLAG_NAME');
     if (treatment == 'on') {
@@ -47,19 +46,114 @@ void main() {
     }
   });
 
-  // Optional: get notified if `readyTimeout` elapses before READY fires.
-  // This future only resolves on timeout — once READY fires, it stays
-  // pending for the lifetime of the client.
+  // Optional: fires only if `readyTimeout` elapses before the SDK is ready.
   client.whenTimeout().then((_) {
-    // insert your fallback-UI code here (evaluations will return 'control')
+    // insert your fallback code here (evaluations return 'control')
   });
 
-  // Optional: react to feature-flag updates after the SDK is ready.
-  // The stream emits the list of changed flag names on every update.
+  // Optional: emits the names of the flags that changed after the SDK is ready.
   client.whenUpdated().listen((changedFlags) {
-    // insert your re-evaluation code here for the changed flags
+    // insert your re-evaluation code here
   });
 }
+```
+
+## Usage
+All the examples below assume `client.whenReady()` has completed.
+
+### Evaluate a feature flag
+```dart
+final treatment = client.getTreatment('new_checkout');
+// 'on'
+
+// Pass attributes used by your targeting rules:
+final premium = client.getTreatment(
+  'new_checkout',
+  attributes: {'plan': 'premium', 'age': 30},
+);
+// 'on'
+```
+A treatment is `'control'` when the SDK is not ready, the flag doesn't exist or the input is invalid.
+
+### Evaluate several feature flags
+```dart
+final treatments = client.getTreatments(['new_checkout', 'dark_mode']);
+// {'new_checkout': 'on', 'dark_mode': 'off'}
+
+// Every flag in the given flag sets:
+final bySet = client.getTreatmentsByFlagSets(['checkout']);
+// {'new_checkout': 'on', 'one_click_pay': 'off'}
+```
+
+### Get the dynamic configuration
+```dart
+final result = client.getTreatmentWithConfig('new_checkout');
+// result.treatment == 'on'
+// result.config == '{"color":"blue"}'   (null when the treatment has no config)
+
+final results = client.getTreatmentsWithConfig(['new_checkout', 'dark_mode']);
+// results['new_checkout']!.treatment == 'on'
+// results['dark_mode']!.config == null
+```
+`getTreatmentsWithConfigByFlagSets` works the same way for flag sets.
+
+### Track events
+```dart
+final queued = client.track(
+  'checkout_completed', // event type
+  'user',               // traffic type
+  value: 49.99,
+  properties: {'plan': 'premium'},
+);
+// true (false if the event is invalid and was dropped)
+```
+
+### Inspect feature flags
+```dart
+final manager = factory.manager();
+
+manager.names();
+// ['new_checkout', 'dark_mode']
+
+final view = manager.split('new_checkout');
+// view?.treatments == ['on', 'off']
+// view?.defaultTreatment == 'off'
+// view?.configs == {'on': '{"color":"blue"}'}
+// null if the flag doesn't exist
+
+manager.splits();
+// a List<SplitView> with one entry per flag
+```
+
+### Other users
+```dart
+final other = factory.client('OTHER_CUSTOMER_ID');
+await other.whenReady(); // each client syncs its own segments
+other.getTreatment('new_checkout');
+// 'on'
+```
+
+### Configuration
+```dart
+final factory = SplitFactory.create(
+  'YOUR_SDK_KEY',
+  const SplitClientConfig(
+    logLevel: LogLevel.info, // default: LogLevel.none
+    impressionsMode: ImpressionsMode.optimized,
+    sync: SyncConfig(
+      featureFlagsPollingRate: 60, // seconds
+      readyTimeout: 10, // seconds
+      streamingEnabled: true,
+    ),
+  ),
+  'CUSTOMER_ID',
+);
+```
+
+### Shutdown
+```dart
+await client.flush(); // send queued impressions and events now
+await factory.destroy(); // flush and release every resource
 ```
 
 Please refer to the [Split documentation](https://developer.harness.io/docs/feature-management-experimentation/sdks-and-infrastructure/) to learn about all the functionality provided by our SDK, as well as the configuration options available for tailoring it to your current application setup.

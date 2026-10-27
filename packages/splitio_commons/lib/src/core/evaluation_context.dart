@@ -1,6 +1,12 @@
+import 'package:splitio_commons/src/logger/logger.dart';
+
 typedef EvaluationResult = ({String treatment, String label});
 
 abstract class EvaluationContext {
+  /// Logger made available to matchers (e.g. to report unparsable attribute
+  /// values); `null` means matchers log nothing.
+  SplitLogger? get logger;
+
   EvaluationResult evaluate(
     String matchingKey,
     String bucketingKey,

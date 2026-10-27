@@ -104,7 +104,7 @@ void main() {
       expect(config.impressionsMode, equals(ImpressionsMode.optimized));
       expect(config.userConsent, equals(ConsentStatus.granted));
       expect(config.impressionListener, isNull);
-      expect(config.logLevel, equals(LogLevel.info));
+      expect(config.logLevel, equals(LogLevel.none));
       expect(config.sync.featureFlagsPollingRate, equals(60));
       expect(config.sync.segmentsPollingRate, equals(60));
       expect(config.sync.impressionsPushRate, equals(300));
@@ -166,6 +166,56 @@ void main() {
       expect(normalized.segmentsPollingRate, equals(60));
       expect(normalized.impressionsPushRate, equals(300));
       expect(normalized.eventsPushRate, equals(120));
+    });
+
+    test('server-side clamp logs a warning naming each clamped setting', () {
+      const config = SyncConfig(
+        featureFlagsPollingRate: 5,
+        segmentsPollingRate: 60,
+        impressionsPushRate: 1,
+        eventsPushRate: 29,
+      );
+      final warnings = <String>[];
+      final normalized = config.normalized(onWarning: warnings.add);
+      expect(normalized.featureFlagsPollingRate, equals(30));
+      expect(warnings, hasLength(3));
+      expect(warnings[0], contains('featureFlagsPollingRate'));
+      expect(warnings[1], contains('impressionsPushRate'));
+      expect(warnings[2], contains('eventsPushRate'));
+    });
+
+    test('server-side with valid rates logs no warning', () {
+      final warnings = <String>[];
+      const SyncConfig().normalized(onWarning: warnings.add);
+      expect(warnings, isEmpty);
+    });
+
+    test('client-side does not clamp positive rates', () {
+      const config = SyncConfig(
+        featureFlagsPollingRate: 5,
+        segmentsPollingRate: 1,
+        impressionsPushRate: 10,
+        eventsPushRate: 29,
+      );
+      final normalized = config.normalized(serverSide: false);
+      expect(normalized.featureFlagsPollingRate, equals(5));
+      expect(normalized.segmentsPollingRate, equals(1));
+      expect(normalized.impressionsPushRate, equals(10));
+      expect(normalized.eventsPushRate, equals(29));
+    });
+
+    test('client-side non-positive rates fall back to the default', () {
+      const config = SyncConfig(
+        featureFlagsPollingRate: 0,
+        segmentsPollingRate: -3,
+        impressionsPushRate: 0,
+        eventsPushRate: -1,
+      );
+      final normalized = config.normalized(serverSide: false);
+      expect(normalized.featureFlagsPollingRate, equals(60));
+      expect(normalized.segmentsPollingRate, equals(60));
+      expect(normalized.impressionsPushRate, equals(300));
+      expect(normalized.eventsPushRate, equals(60));
     });
 
     test('clamps negative readyTimeout to 0', () {

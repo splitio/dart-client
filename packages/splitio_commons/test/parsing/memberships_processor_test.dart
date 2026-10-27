@@ -166,5 +166,41 @@ void main() {
       expect(store.isInSegment('legacy_seg', 'user1'), isTrue);
       expect(store.isInSegment('new_seg', 'user1'), isTrue);
     });
+
+    // processMemberships's bool return drives whenUpdated() (spec
+    // §4.6/§8.2, BUG #12): it MUST report the store's own change-detection
+    // result, not just "we wrote something".
+    test('returns true when the response changes the stored membership set',
+        () {
+      final changed = processor.processMemberships({
+        'ms': {
+          'k': ['seg_a'],
+          'cn': 1,
+        },
+      }, 'user1');
+
+      expect(changed, isTrue);
+    });
+
+    test(
+        'returns false when the response is identical to what is already '
+        'stored', () {
+      final response = {
+        'ms': {
+          'k': ['seg_a'],
+          'cn': 1,
+        },
+      };
+      processor.processMemberships(response, 'user1');
+
+      final changed = processor.processMemberships({
+        'ms': {
+          'k': ['seg_a'],
+          'cn': 2,
+        },
+      }, 'user1');
+
+      expect(changed, isFalse);
+    });
   });
 }

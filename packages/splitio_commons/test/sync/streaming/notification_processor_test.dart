@@ -16,6 +16,7 @@ void main() {
       'MEMBERSHIPS_MS_UPDATE',
       'MEMBERSHIPS_LS_UPDATE',
       'RB_SEGMENT_UPDATE',
+      'SEGMENT_UPDATE',
     ]) {
       test('$type → FeedUpdate with type + payload passthrough', () {
         final payload = {

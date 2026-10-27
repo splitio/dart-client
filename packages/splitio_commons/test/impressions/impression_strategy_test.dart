@@ -11,6 +11,7 @@ void main() {
     int changeNumber = 100,
     String label = 'rule',
     int time = 1000,
+    Map<String, Object?>? properties,
   }) {
     return KeyImpression(
       feature: feature,
@@ -19,6 +20,7 @@ void main() {
       changeNumber: changeNumber,
       label: label,
       time: time,
+      properties: properties,
     );
   }
 
@@ -113,6 +115,41 @@ void main() {
 
       strategy.process(makeImpression(time: 1000));
       strategy.process(makeImpression(time: 2000));
+
+      expect(store.popAll(), hasLength(1));
+    });
+
+    test(
+        'impressions with properties are queued individually, not deduped '
+        'or counted', () {
+      final observer = ImpressionsObserver();
+      final counter = ImpressionsCounter();
+      final store = InMemoryImpressionsStore();
+      final strategy = OptimizedImpressionStrategy(
+        observer: observer,
+        counter: counter,
+        store: store,
+      );
+
+      strategy.process(makeImpression(time: 1000, properties: {'a': 1}));
+      strategy.process(makeImpression(time: 2000, properties: {'a': 1}));
+
+      final queued = store.popAll();
+      expect(queued, hasLength(2));
+      expect(queued.every((i) => i.pt == null), isTrue);
+      expect(counter.popAll(), isEmpty);
+    });
+
+    test('empty properties are deduped like no properties', () {
+      final store = InMemoryImpressionsStore();
+      final strategy = OptimizedImpressionStrategy(
+        observer: ImpressionsObserver(),
+        counter: ImpressionsCounter(),
+        store: store,
+      );
+
+      strategy.process(makeImpression(time: 1000, properties: const {}));
+      strategy.process(makeImpression(time: 2000, properties: const {}));
 
       expect(store.popAll(), hasLength(1));
     });

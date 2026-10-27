@@ -5,7 +5,7 @@ class ImpressionsObserver {
   final LinkedHashMap<String, int> _cache = LinkedHashMap();
 
   int? testAndSet(String feature, String key, String treatment,
-      int changeNumber, String label, int time) {
+      int? changeNumber, String label, int time) {
     final dedupKey = '$feature::$key::$treatment::$changeNumber::$label';
     final previous = _cache[dedupKey];
     _cache.remove(dedupKey);

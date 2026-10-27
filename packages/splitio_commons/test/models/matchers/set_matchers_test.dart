@@ -33,6 +33,11 @@ void main() {
       expect(matcher.match(123, defaultCtx()), isFalse);
     });
 
+    test('matches a Set<String> runtime value, not just a List', () {
+      expect(matcher.match(<String>{'a', 'b', 'c'}, defaultCtx()), isTrue);
+      expect(matcher.match(<String>{'a', 'b'}, defaultCtx()), isFalse);
+    });
+
     test('handles empty set', () {
       const emptyMatcher = EqualToSetMatcher(compareTo: {});
       expect(emptyMatcher.match([], defaultCtx()), isTrue);
@@ -62,6 +67,11 @@ void main() {
       expect(matcher.match(null, defaultCtx()), isFalse);
       expect(matcher.match('a', defaultCtx()), isFalse);
       expect(matcher.match(123, defaultCtx()), isFalse);
+    });
+
+    test('matches a Set<String> runtime value, not just a List', () {
+      expect(matcher.match(<String>{'a'}, defaultCtx()), isTrue);
+      expect(matcher.match(<String>{'x', 'y'}, defaultCtx()), isFalse);
     });
 
     test('returns false for empty compareTo', () {
@@ -97,6 +107,11 @@ void main() {
       expect(matcher.match(123, defaultCtx()), isFalse);
     });
 
+    test('matches a Set<String> runtime value, not just a List', () {
+      expect(matcher.match(<String>{'a', 'b'}, defaultCtx()), isTrue);
+      expect(matcher.match(<String>{'a'}, defaultCtx()), isFalse);
+    });
+
     test('returns false for empty compareTo', () {
       const emptyMatcher = ContainsAllOfSetMatcher(compareTo: {});
       expect(emptyMatcher.match(['a'], defaultCtx()), isFalse);
@@ -128,6 +143,11 @@ void main() {
       expect(matcher.match(null, defaultCtx()), isFalse);
       expect(matcher.match('a', defaultCtx()), isFalse);
       expect(matcher.match(123, defaultCtx()), isFalse);
+    });
+
+    test('matches a Set<String> runtime value, not just a List', () {
+      expect(matcher.match(<String>{'a', 'b'}, defaultCtx()), isTrue);
+      expect(matcher.match(<String>{'a', 'x'}, defaultCtx()), isFalse);
     });
   });
 }

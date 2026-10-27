@@ -14,7 +14,8 @@ void main() {
           captured = request;
           return http.Response('{}', 200);
         });
-        final client = SplitHttpClient(apiKey: 'my-key', client: mock);
+        final client = SplitHttpClient(
+            sdkVersion: 'dart_test-1.0.0', apiKey: 'my-key', client: mock);
 
         await client.get('https://api.example.com/test');
 
@@ -28,11 +29,27 @@ void main() {
           captured = request;
           return http.Response('{}', 200);
         });
-        final client = SplitHttpClient(apiKey: 'key', client: mock);
+        final client = SplitHttpClient(
+            sdkVersion: 'dart_test-1.0.0', apiKey: 'key', client: mock);
 
         await client.get('https://api.example.com/test');
 
-        expect(captured!.headers['SplitSDKVersion'], 'dart_st-1.0.0');
+        expect(captured!.headers['SplitSDKVersion'], 'dart_test-1.0.0');
+        client.close();
+      });
+
+      test('sends the configured SplitSDKVersion header', () async {
+        http.Request? captured;
+        final mock = MockClient((request) async {
+          captured = request;
+          return http.Response('{}', 200);
+        });
+        final client = SplitHttpClient(
+            apiKey: 'key', client: mock, sdkVersion: 'dart_test-2.0.0');
+
+        await client.get('https://api.example.com/test');
+
+        expect(captured!.headers['SplitSDKVersion'], 'dart_test-2.0.0');
         client.close();
       });
 
@@ -42,7 +59,8 @@ void main() {
           capturedUri = request.url;
           return http.Response('{}', 200);
         });
-        final client = SplitHttpClient(apiKey: 'key', client: mock);
+        final client = SplitHttpClient(
+            sdkVersion: 'dart_test-1.0.0', apiKey: 'key', client: mock);
 
         await client.get(
           'https://api.example.com/splitChanges',
@@ -62,7 +80,8 @@ void main() {
             headers: {'x-custom': 'value'},
           );
         });
-        final client = SplitHttpClient(apiKey: 'key', client: mock);
+        final client = SplitHttpClient(
+            sdkVersion: 'dart_test-1.0.0', apiKey: 'key', client: mock);
 
         final response = await client.get('https://api.example.com/test');
 
@@ -78,7 +97,8 @@ void main() {
           captured = request;
           return http.Response('{}', 200);
         });
-        final client = SplitHttpClient(apiKey: 'key', client: mock);
+        final client = SplitHttpClient(
+            sdkVersion: 'dart_test-1.0.0', apiKey: 'key', client: mock);
 
         await client.get(
           'https://api.example.com/test',
@@ -87,7 +107,7 @@ void main() {
 
         expect(captured!.headers['Cache-Control'], 'no-cache');
         expect(captured!.headers['Authorization'], 'Bearer key');
-        expect(captured!.headers['SplitSDKVersion'], 'dart_st-1.0.0');
+        expect(captured!.headers['SplitSDKVersion'], 'dart_test-1.0.0');
         client.close();
       });
 
@@ -97,7 +117,8 @@ void main() {
           captured = request;
           return http.Response('{}', 200);
         });
-        final client = SplitHttpClient(apiKey: 'key', client: mock);
+        final client = SplitHttpClient(
+            sdkVersion: 'dart_test-1.0.0', apiKey: 'key', client: mock);
 
         await client.get('https://api.example.com/test');
 
@@ -107,7 +128,8 @@ void main() {
 
       test('propagates non-200 status codes', () async {
         final mock = MockClient((_) async => http.Response('Not Found', 404));
-        final client = SplitHttpClient(apiKey: 'key', client: mock);
+        final client = SplitHttpClient(
+            sdkVersion: 'dart_test-1.0.0', apiKey: 'key', client: mock);
 
         final response = await client.get('https://api.example.com/missing');
 
@@ -124,7 +146,8 @@ void main() {
           captured = request;
           return http.Response('{}', 200);
         });
-        final client = SplitHttpClient(apiKey: 'key', client: mock);
+        final client = SplitHttpClient(
+            sdkVersion: 'dart_test-1.0.0', apiKey: 'key', client: mock);
 
         await client.post('https://api.example.com/events', body: {'a': 1});
 
@@ -138,7 +161,8 @@ void main() {
           capturedBody = request.body;
           return http.Response('{}', 200);
         });
-        final client = SplitHttpClient(apiKey: 'key', client: mock);
+        final client = SplitHttpClient(
+            sdkVersion: 'dart_test-1.0.0', apiKey: 'key', client: mock);
 
         final payload = {
           'events': [1, 2, 3]
@@ -155,7 +179,8 @@ void main() {
           capturedBody = request.body;
           return http.Response('{}', 200);
         });
-        final client = SplitHttpClient(apiKey: 'key', client: mock);
+        final client = SplitHttpClient(
+            sdkVersion: 'dart_test-1.0.0', apiKey: 'key', client: mock);
 
         await client.post('https://api.example.com/events');
 
@@ -169,7 +194,8 @@ void main() {
           captured = request;
           return http.Response('{}', 200);
         });
-        final client = SplitHttpClient(apiKey: 'secret', client: mock);
+        final client = SplitHttpClient(
+            sdkVersion: 'dart_test-1.0.0', apiKey: 'secret', client: mock);
 
         await client.post('https://api.example.com/events');
 

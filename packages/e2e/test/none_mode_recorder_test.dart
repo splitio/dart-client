@@ -48,17 +48,17 @@ void main() {
       final key = Key(matchingKey: 'user_a');
       final factory = SplitFactory.create('fake-api-key', config, key);
 
-      await factory
-          .client(key)
-          .whenReady()
-          .timeout(const Duration(seconds: 5));
+      await factory.client(key).whenReady().timeout(const Duration(seconds: 5));
 
       final client = factory.client(key);
       client.getTreatment('test_flag_whitelist');
       client.getTreatment('test_flag_whitelist');
 
       final key2 = Key(matchingKey: 'user_b');
-      factory.client(key2).getTreatment('test_flag_whitelist');
+      // A shared client is READY only once its own memberships synced (§8.2).
+      final client2 = factory.client(key2);
+      await client2.whenReady().timeout(const Duration(seconds: 5));
+      client2.getTreatment('test_flag_whitelist');
 
       await factory.destroy();
 

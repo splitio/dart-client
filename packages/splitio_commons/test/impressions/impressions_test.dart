@@ -171,6 +171,7 @@ void main() {
       required ImpressionsMode mode,
       ImpressionListener? listener,
       ConsentStatus Function() consentProvider = _grantedConsent,
+      String sdkVersion = 'dart_test-1.0.0',
     }) {
       final observer = ImpressionsObserver();
       final counter = ImpressionsCounter();
@@ -194,11 +195,13 @@ void main() {
             tracker: UniqueKeysTracker(),
           );
       }
+      final log = SplitLogger(level: LogLevel.none);
       final manager = ImpressionsManager(
         strategy: strategy,
         listener: listener,
         consentProvider: consentProvider,
-        log: SplitLogger(level: LogLevel.none),
+        log: log,
+        sdkVersion: sdkVersion,
       );
       return (manager: manager, store: store);
     }
@@ -266,6 +269,7 @@ void main() {
           store: store,
         );
         final manager = ImpressionsManager(
+          sdkVersion: 'dart_test-1.0.0',
           strategy: strategy,
           consentProvider: _grantedConsent,
           log: SplitLogger(level: LogLevel.none),
@@ -288,6 +292,7 @@ void main() {
           store: store,
         );
         final manager = ImpressionsManager(
+          sdkVersion: 'dart_test-1.0.0',
           strategy: strategy,
           consentProvider: _grantedConsent,
           log: SplitLogger(level: LogLevel.none),
@@ -390,6 +395,21 @@ void main() {
 
         await Future<void>.value();
         expect(listener.logged[0].attributes, equals(attrs));
+      });
+
+      test('reports the injected sdkLanguageVersion', () async {
+        final listener = _FakeListener();
+        final (:manager, store: _) = makeManager(
+          mode: ImpressionsMode.debug,
+          listener: listener,
+          sdkVersion: 'dart_test-2.0.0',
+        );
+
+        manager.record(makeImpression(), false, null);
+
+        await Future<void>.value();
+        expect(
+            listener.logged[0].sdkLanguageVersion, equals('dart_test-2.0.0'));
       });
 
       test('exceptions in listener are caught and do not propagate', () async {

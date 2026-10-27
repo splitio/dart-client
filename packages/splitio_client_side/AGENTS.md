@@ -9,9 +9,9 @@
 - `lib/splitio_client_side.dart` — Public library export (re-exports all user-facing types)
 - `lib/src/internal/split_factory.dart` — `SplitFactory`: creates SDK instances, wires all layers
 - `lib/src/internal/dependency_container.dart` — DI composition root (LOC-exemption: approved)
-- `lib/src/internal/split_manager.dart` — `SplitManager`: flag listing / metadata queries
-- `lib/src/internal/user_consent.dart` — User consent state management
-- `lib/src/client/split_client.dart` — `SplitClient`: per-key evaluation + track + lifecycle
+- `lib/src/internal/client_readiness.dart` — `ClientReadiness`: per-client READY/TIMEOUT/UPDATE state, disposed in factory `destroy()`
+- `lib/src/client/split_client.dart` — `SplitClient`: per-key adapter over the commons `TreatmentMethods` / `TrackMethod`; owns lifecycle (`destroy()` calls `onDestroyed` before the final flush)
+- `SplitManager` / `UserConsentManager` come from `splitio_commons/lib/src/client/`
 
 ## Testing
 

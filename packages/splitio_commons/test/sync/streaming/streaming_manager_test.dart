@@ -13,6 +13,7 @@ import 'package:splitio_commons/src/storage/storage.dart';
 import 'package:splitio_commons/src/sync/sync.dart';
 import 'package:test/test.dart';
 
+import '../compression/inflate_vectors.dart';
 import 'fakes.dart';
 
 /// AuthProvider stub returning a configurable credential and counting
@@ -134,7 +135,8 @@ void main() {
       }
       return http.Response('{}', 200);
     });
-    final httpClient = SplitHttpClient(apiKey: 'sdk-key', client: mockClient);
+    final httpClient = SplitHttpClient(
+        sdkVersion: 'dart_test-1.0.0', apiKey: 'sdk-key', client: mockClient);
     flagsFetcher = FlagsFetcher(
       httpClient: httpClient,
       log: log,
@@ -173,13 +175,16 @@ void main() {
     void Function(SyncMode, SyncModeChangeReason)? onSyncModeChanged,
     List<String> Function()? matchingKeys,
     SplitLogger? logger,
+    Future<bool> Function(String)? segmentFetcher,
   }) {
     return StreamingManager(
       transport: transport,
       authProvider: auth,
       flagsFetcher: flagsFetcher,
       membershipsFetcher: membershipsFetcher,
+      segmentFetcher: segmentFetcher,
       ruleStore: ruleStore,
+      rbsStore: rbsStore,
       membershipStore: membershipStore,
       streamingBaseUri: Uri.parse('https://streaming.example'),
       logger: logger ?? log,
@@ -196,6 +201,11 @@ void main() {
       () async {
     transport.statusCode = 200;
     transport.lines = [':keepalive']; // no dispatched frames
+    // Hold the connection open: every retryable failure (including the
+    // stream naturally ending) now drops connectionDown unconditionally
+    // (§11.3), so this test — which asserts push STAYS up — must not let
+    // the stream end on its own.
+    transport.keepOpen = true;
     var pushed = false;
     final mgr = build(FakeAuthProvider(_pushCredential()),
         onPushEnabled: () => pushed = true);
@@ -292,8 +302,10 @@ void main() {
     expect(scheduler.pendingCount, 1);
   });
 
-  test('after connect, 1st failure schedules reconnect without poll fallback',
-      () async {
+  test(
+      'after connect, 1st failure immediately drops connectionDown and '
+      'notifies poll fallback (§11.3: the old ≥2-consecutive-failures '
+      'threshold before connectionDown is removed)', () async {
     // Connect succeeds first (empty stream → onDone → retryable drop = fail 1).
     transport.statusCode = 200;
     var pollCount = 0;
@@ -303,13 +315,20 @@ void main() {
     await mgr.start();
     await Future<void>.delayed(const Duration(milliseconds: 10));
 
-    // 1st drop after a healthy connect: reconnect armed, still push-up.
+    // The very FIRST retryable failure after a healthy connect already
+    // closes the socket, drops the connection axis and notifies poll
+    // fallback — no more "needs 2 failures" grace period.
     expect(scheduler.pendingCount, 1);
-    expect(pollCount, 0, reason: '1 failure must not trigger poll fallback');
-    expect(mgr.state.connectionDown, isFalse);
+    expect(mgr.state.connectionDown, isTrue);
+    expect(pollCount, 1,
+        reason: 'every retryable failure MUST notify poll fallback, '
+            'including the first');
   });
 
-  test('2nd consecutive failure → connectionDown → poll fallback', () async {
+  test(
+      'a second consecutive failure keeps connectionDown down and notifies '
+      'poll fallback again (receivers MUST treat it idempotently, §11.3)',
+      () async {
     // Healthy connect first, then failing reconnects.
     transport.statusCode = 200;
     var pollCount = 0;
@@ -318,13 +337,19 @@ void main() {
 
     await mgr.start();
     await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(pollCount, 1, reason: 'already dropped on the 1st failure');
+
     // 1st drop already scheduled a reconnect. Now make reconnects fail.
     transport.statusCode = 503;
     scheduler.flush(); // fires reconnect → connect 503 → failure 2
     await Future<void>.delayed(const Duration(milliseconds: 10));
 
     expect(mgr.state.connectionDown, isTrue);
-    expect(pollCount, greaterThanOrEqualTo(1));
+    // No genuine push-gate edge on the 2nd failure (already down), but the
+    // FSM still force-emits NotifyPushDisabled on every retryable failure;
+    // the receiver (SyncManager.startPolling) is what
+    // must treat the repeat as a no-op, not the FSM.
+    expect(pollCount, 2);
   });
 
   test('reconnect dedup: repeated errors do not stack pending reconnects',
@@ -395,8 +420,138 @@ void main() {
     expect(membershipsFetchCount, greaterThan(membershipsAfterConnect));
   });
 
+  group('compressed notifications', () {
+    const inBitmap = '88f8b33b-f858-4aea-bea2-a5f066bab3ce';
+    const notInBitmap = '88f8b33b-f858-4aea-bea2-a5f066bab3c0';
+
+    Future<void> run(StreamingManager mgr) async {
+      await mgr.start();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      scheduler.flush();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    StreamingManager buildForKeys(List<String> keys, List<String> fetchedKeys,
+        {SplitLogger? logger}) {
+      final client = MockClient((request) async {
+        if (request.url.path.contains('memberships')) {
+          fetchedKeys.add(request.url.path.split('/').last);
+        }
+        return http.Response(jsonEncode({'ms': {}, 'ls': {}}), 200);
+      });
+      final fetcher = MembershipsFetcher(
+        httpClient: SplitHttpClient(
+            sdkVersion: 'dart_test-1.0.0', apiKey: 'sdk-key', client: client),
+        log: log,
+        baseUrl: 'https://sdk.example',
+        processor: MembershipsProcessor(membershipStore: membershipStore),
+      );
+      keys.forEach(fetcher.bindKey);
+      return StreamingManager(
+        transport: transport,
+        authProvider: FakeAuthProvider(_pushCredential()),
+        flagsFetcher: flagsFetcher,
+        membershipsFetcher: fetcher,
+        ruleStore: ruleStore,
+        rbsStore: rbsStore,
+        membershipStore: membershipStore,
+        streamingBaseUri: Uri.parse('https://streaming.example'),
+        logger: logger ?? log,
+        scheduler: scheduler,
+        clock: clock,
+        matchingKeys: () => keys,
+      );
+    }
+
+    Map<String, dynamic> bounded(String d) => {
+          'type': 'MEMBERSHIPS_MS_UPDATE',
+          'u': 1,
+          'cn': 5,
+          'c': 1,
+          'd': d,
+          'h': 0
+        };
+
+    test('gzip SPLIT_UPDATE with pcn == stored applies in place', () async {
+      transport.statusCode = 200;
+      transport.keepOpen = true;
+      transport.lines = _messageFrame({
+        'type': 'SPLIT_UPDATE',
+        'changeNumber': jsSplit0ChangeNumber,
+        // The mock /splitChanges catch-up leaves the store at change 10.
+        'pcn': 10,
+        'c': 1,
+        'd': jsSplit0C1,
+      });
+      final updated = <List<String>>[];
+      final mgr = StreamingManager(
+        transport: transport,
+        authProvider: FakeAuthProvider(_pushCredential()),
+        flagsFetcher: flagsFetcher,
+        ruleStore: ruleStore,
+        rbsStore: rbsStore,
+        streamingBaseUri: Uri.parse('https://streaming.example'),
+        logger: log,
+        scheduler: scheduler,
+        clock: clock,
+        onFlagsUpdated: updated.add,
+      );
+
+      await run(mgr);
+
+      expect(updated.expand((e) => e), contains(jsSplit0Name));
+      await mgr.stop();
+    });
+
+    test('gzip BOUNDED: fetches for the key whose bit is set only', () async {
+      transport.statusCode = 200;
+      transport.keepOpen = true;
+      transport.lines = _messageFrame(bounded(jsBitmap0Gzip));
+      final fetchedKeys = <String>[];
+      final mgr = buildForKeys([inBitmap, notInBitmap], fetchedKeys);
+
+      await run(mgr);
+
+      // Catch-up fetches both keys once; only the targeted key is fetched
+      // again for the notification.
+      expect(fetchedKeys.where((k) => k == inBitmap).length, 2);
+      expect(fetchedKeys.where((k) => k == notInBitmap).length, 1);
+      await mgr.stop();
+    });
+
+    test('malformed BOUNDED: one WARNING, unbounded fetch for each key',
+        () async {
+      transport.statusCode = 200;
+      transport.keepOpen = true;
+      transport.lines = _messageFrame(bounded(malformedBounded));
+      final fetchedKeys = <String>[];
+      final mgr = buildForKeys(['k1', 'k2'], fetchedKeys,
+          logger: SplitLogger(level: LogLevel.warning));
+      final logs = <String>[];
+      await runZoned(() => run(mgr),
+          zoneSpecification: ZoneSpecification(
+            print: (_, __, ___, line) => logs.add(line),
+          ));
+
+      final warnings = logs.where(
+          (l) => l.contains('Fetching Memberships due to an error processing '
+              'BoundedFetchRequest notification'));
+      expect(warnings, hasLength(1));
+      // catch-up fetch + one notification fetch per key.
+      expect(fetchedKeys.where((k) => k == 'k1').length, 2);
+      expect(fetchedKeys.where((k) => k == 'k2').length, 2);
+      await mgr.stop();
+    });
+  });
+
   test('CONTROL STREAMING_PAUSED → poll; STREAMING_RESUMED → push', () async {
     transport.statusCode = 200;
+    // Hold the connection open after the two control frames: the stream
+    // naturally ending is itself a retryable failure that now
+    // unconditionally drops connectionDown (§11.3), which would otherwise
+    // flip push back down right after STREAMING_RESUMED and break the
+    // final isPushUp assertion.
+    transport.keepOpen = true;
     var pushEnabledCount = 0;
     var pushDisabledCount = 0;
     transport.lines = [
@@ -426,6 +581,9 @@ void main() {
 
   test('OCCUPANCY publishers=0 → push down; >0 → push up', () async {
     transport.statusCode = 200;
+    // Hold the connection open after the two occupancy frames — see the
+    // CONTROL test above for why (§11.3).
+    transport.keepOpen = true;
     var pushDisabled = 0;
     var pushEnabled = 0;
     transport.lines = [
@@ -617,10 +775,83 @@ void main() {
     expect(flagsFetchCount, greaterThanOrEqualTo(2));
   });
 
+  test('SEGMENT_UPDATE dispatches a fetch for the named segment (server-side)',
+      () async {
+    transport.statusCode = 200;
+    transport.lines = _messageFrame({
+      'type': 'SEGMENT_UPDATE',
+      'changeNumber': 100,
+      'segmentName': 'my-seg',
+    });
+    final fetched = <String>[];
+    final mgr = build(
+      FakeAuthProvider(_pushCredential()),
+      segmentFetcher: (name) async {
+        fetched.add(name);
+        return true;
+      },
+    );
+
+    await mgr.start();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(fetched, ['my-seg']);
+  });
+
+  test('SEGMENT_UPDATE without a segmentFetcher is ignored (client-side)',
+      () async {
+    transport.statusCode = 200;
+    // Hold the connection open — see the CONTROL test above for why (§11.3):
+    // the final assertion checks isPushUp stays true, so the stream must
+    // not be allowed to naturally end and drop the connection axis.
+    transport.keepOpen = true;
+    transport.lines = _messageFrame({
+      'type': 'SEGMENT_UPDATE',
+      'changeNumber': 100,
+      'segmentName': 'my-seg',
+    });
+    // No segmentFetcher provided → routed as a no-op, no crash.
+    final mgr = build(FakeAuthProvider(_pushCredential()));
+
+    await mgr.start();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    // The frame is processed and ignored — the connection stays healthy.
+    expect(mgr.isPushUp, isTrue);
+  });
+
+  test('SEGMENT_UPDATE with missing segmentName is dropped (no fetch)',
+      () async {
+    transport.statusCode = 200;
+    transport.lines = _messageFrame({
+      'type': 'SEGMENT_UPDATE',
+      'changeNumber': 100,
+      // segmentName omitted
+    });
+    final fetched = <String>[];
+    final mgr = build(
+      FakeAuthProvider(_pushCredential()),
+      segmentFetcher: (name) async {
+        fetched.add(name);
+        return true;
+      },
+    );
+
+    await mgr.start();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(fetched, isEmpty);
+  });
+
   test(
       'reconnect during in-flight credential fetch opens only one socket (TOCTOU)',
       () async {
     transport.statusCode = 200;
+    // Hold the connection open — the final assertion checks isPushUp stays
+    // true, so the default empty-lines stream must not be allowed to
+    // naturally end and drop the connection axis (§11.3). This test is
+    // about dedup of the credential fetch, not socket-drop behavior.
+    transport.keepOpen = true;
     final auth = GatedAuthProvider(_pushCredential());
     final mgr = build(auth);
 
@@ -735,6 +966,82 @@ void main() {
       });
 
       expect(logs, isEmpty);
+    });
+  });
+
+  // Server-side topology (spec Axis 3, §17.2): no per-key memberships. The
+  // MembershipsFetcher + MembershipStore MUST be optional; MEMBERSHIPS_* frames
+  // are ignored and catch-up runs the flags fetch only. This mirrors
+  // `javascript-commons/sync/streaming/pushManager.ts`, which only subscribes
+  // MEMBERSHIPS_* handlers when a `userKey` is bound.
+  group('server-side topology (no memberships)', () {
+    StreamingManager buildServerSide(AuthProvider auth) {
+      return StreamingManager(
+        transport: transport,
+        authProvider: auth,
+        flagsFetcher: flagsFetcher,
+        // No membershipsFetcher, no membershipStore.
+        ruleStore: ruleStore,
+        rbsStore: rbsStore,
+        streamingBaseUri: Uri.parse('https://streaming.example'),
+        logger: log,
+        scheduler: scheduler,
+        clock: clock,
+      );
+    }
+
+    test('catch-up fetches flags only (no memberships)', () async {
+      transport.statusCode = 200;
+      transport.lines = [':keepalive'];
+      // Hold the connection open — the final assertion checks isPushUp
+      // stays true (§11.3); see the CONTROL test above for why.
+      transport.keepOpen = true;
+
+      final mgr = buildServerSide(FakeAuthProvider(_pushCredential()));
+      await mgr.start();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(flagsFetchCount, 1);
+      expect(membershipsFetchCount, 0);
+      expect(mgr.isPushUp, isTrue);
+    });
+
+    test('MEMBERSHIPS_MS_UPDATE is ignored (no membership strategy)', () async {
+      transport.statusCode = 200;
+      transport.lines = _messageFrame({
+        'type': 'MEMBERSHIPS_MS_UPDATE',
+        'u': 0,
+        'cn': 5,
+        'i': 1000,
+        'h': 1,
+        's': 42,
+      });
+
+      final mgr = buildServerSide(FakeAuthProvider(_pushCredential()));
+      await mgr.start();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      // Flush any scheduled work (jitter, token refresh) to confirm no
+      // memberships fetch is queued behind them.
+      scheduler.flush();
+      await Future<void>.delayed(Duration.zero);
+      expect(membershipsFetchCount, 0);
+    });
+
+    test('SPLIT_UPDATE still triggers a flags fetch on server-side', () async {
+      transport.statusCode = 200;
+      transport.lines = _messageFrame({
+        'type': 'SPLIT_UPDATE',
+        'changeNumber': 100,
+      });
+
+      final mgr = buildServerSide(FakeAuthProvider(_pushCredential()));
+      await mgr.start();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      // 1 catch-up + 1 from the notification, memberships untouched.
+      expect(flagsFetchCount, greaterThanOrEqualTo(2));
+      expect(membershipsFetchCount, 0);
     });
   });
 }

@@ -27,13 +27,18 @@ void main() {
       capturedRequests = [];
     });
 
-    EventsRecorder makeRecorder({int pushRateSeconds = 60}) {
+    EventsRecorder makeRecorder({
+      int pushRateSeconds = 60,
+      http.Client? mockClient,
+    }) {
       final client = SplitHttpClient(
+        sdkVersion: 'dart_test-1.0.0',
         apiKey: 'test-api-key',
-        client: MockClient((req) async {
-          capturedRequests.add(req);
-          return http.Response('', 200);
-        }),
+        client: mockClient ??
+            MockClient((req) async {
+              capturedRequests.add(req);
+              return http.Response('', 200);
+            }),
       );
       return EventsRecorder(
         store: store,
@@ -81,6 +86,95 @@ void main() {
       await recorder.flush();
 
       expect(capturedRequests, hasLength(3));
+    });
+
+    test(
+        'a transient failure retains the batch for the next flush cycle, '
+        'then it succeeds (spec §13.1)', () async {
+      store.push(_event('purchase'), 1024);
+      var attempts = 0;
+
+      final recorder = makeRecorder(
+        mockClient: MockClient((req) async {
+          attempts++;
+          capturedRequests.add(req);
+          if (attempts == 1) return http.Response('', 503);
+          return http.Response('', 200);
+        }),
+      );
+
+      await recorder.flush();
+      expect(attempts, 1);
+
+      await recorder.flush();
+      expect(attempts, 2);
+      final body = jsonDecode(capturedRequests.last.body) as List;
+      expect(body, hasLength(1));
+      expect(body.first['eventTypeId'], 'purchase');
+    });
+
+    test('a second consecutive failure drops the batch (spec §13.1)', () async {
+      store.push(_event('purchase'), 1024);
+      var attempts = 0;
+
+      final recorder = makeRecorder(
+        mockClient: MockClient((req) async {
+          attempts++;
+          return http.Response('', 500);
+        }),
+      );
+
+      await recorder.flush();
+      await recorder.flush();
+      expect(attempts, 2);
+
+      await recorder.flush();
+      expect(attempts, 2, reason: 'batch was dropped after the retry failed');
+    });
+
+    test('a non-retryable 4xx drops the batch immediately (spec §13.1)',
+        () async {
+      store.push(_event('purchase'), 1024);
+      var attempts = 0;
+
+      final recorder = makeRecorder(
+        mockClient: MockClient((req) async {
+          attempts++;
+          return http.Response('', 422);
+        }),
+      );
+
+      await recorder.flush();
+      expect(attempts, 1);
+
+      await recorder.flush();
+      expect(attempts, 1, reason: 'no retry for a non-retryable status');
+    });
+
+    test(
+        'clearRetained drops a batch retained after a failed POST — no '
+        'retry on the next flush (spec §7.2)', () async {
+      store.push(_event('purchase'), 1024);
+      var attempts = 0;
+
+      final recorder = makeRecorder(
+        mockClient: MockClient((req) async {
+          attempts++;
+          return http.Response('', 500);
+        }),
+      );
+
+      await recorder.flush();
+      expect(attempts, 1, reason: 'first POST fails, batch retained');
+
+      recorder.clearRetained();
+
+      await recorder.flush();
+      expect(
+        attempts,
+        1,
+        reason: 'retained batch was dropped — no retry POST happened',
+      );
     });
   });
 }

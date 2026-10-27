@@ -1,12 +1,15 @@
 library splitio_commons;
 
+// client
+export 'src/client/basic_split_client.dart';
+
 // core
 export 'src/core/coercion.dart';
-export 'src/core/evaluation_context.dart' hide EvaluationResult, EvaluationContext;
+export 'src/core/evaluation_context.dart'
+    hide EvaluationResult, EvaluationContext;
 export 'src/core/matching_context.dart';
 export 'src/core/murmur128.dart';
 export 'src/core/murmur3.dart';
-export 'src/core/sdk_version.dart';
 export 'src/core/semver.dart';
 
 // models

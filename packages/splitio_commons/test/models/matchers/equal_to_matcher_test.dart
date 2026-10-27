@@ -13,13 +13,25 @@ void main() {
       });
 
       test('does not match string representation', () {
-        // asLong only accepts int, not String
+        // asNumber only accepts a number, not String
         expect(matcher.match('42', defaultCtx()), isFalse);
       });
 
       test('does not match different number', () {
         expect(matcher.match(41, defaultCtx()), isFalse);
         expect(matcher.match(0, defaultCtx()), isFalse);
+      });
+
+      test('matches a whole-valued double (18.0 == 18 semantics)', () {
+        const wholeMatcher =
+            EqualToMatcher(value: 18, dataType: DataType.number);
+        expect(wholeMatcher.match(18.0, defaultCtx()), isTrue);
+      });
+
+      test('does not match a fractional double (18.5 != 18)', () {
+        const fractionalMatcher =
+            EqualToMatcher(value: 18, dataType: DataType.number);
+        expect(fractionalMatcher.match(18.5, defaultCtx()), isFalse);
       });
 
       test('returns false for non-numeric values', () {
@@ -55,6 +67,12 @@ void main() {
         final differentTimestamp =
             DateTime.utc(2024, 1, 16).millisecondsSinceEpoch;
         expect(matcher.match(differentTimestamp, defaultCtx()), isFalse);
+      });
+
+      test('matches when the runtime value is a double of epoch millis', () {
+        final sameDayAsDouble =
+            DateTime.utc(2024, 1, 15, 14, 30).millisecondsSinceEpoch.toDouble();
+        expect(matcher.match(sameDayAsDouble, defaultCtx()), isTrue);
       });
 
       test('returns false for invalid datetime values', () {

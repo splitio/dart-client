@@ -13,18 +13,26 @@ class ValidatedProperties {
   const ValidatedProperties({required this.properties, required this.size});
 }
 
-/// Validates and normalises the properties map. Returns `null` properties on
-/// hard failure (too many entries or over size limit).
+/// Validates and normalises the properties map. Returns `null` only on hard
+/// failure (estimated size over 32 KB).
 ///
-/// - Values not of type String/num/bool/null are coerced to `null`.
+/// - More than 300 properties is NOT a failure: the event is still tracked and
+///   [onWarning] receives a warning (JS parity; the backend trims the excess).
+/// - Values not of type String/num/bool/null are coerced to `null`, with a
+///   warning per offending key sent to [onWarning].
 /// - Returns the estimated event byte size, starting from a 1 KB base.
-ValidatedProperties? validateProperties(Map<String, Object?>? maybeProperties) {
+ValidatedProperties? validateProperties(
+  Map<String, Object?>? maybeProperties, {
+  String method = 'track',
+  void Function(String message)? onWarning,
+}) {
   if (maybeProperties == null) {
     return const ValidatedProperties(properties: null, size: _baseEventSize);
   }
 
   if (maybeProperties.length > _maxProperties) {
-    return null;
+    onWarning?.call('$method: more than $_maxProperties properties were '
+        'provided. Some of them will be trimmed when processed.');
   }
 
   final clone = <String, Object?>{...maybeProperties};
@@ -44,10 +52,39 @@ ValidatedProperties? validateProperties(Map<String, Object?>? maybeProperties) {
       size += _boolByte;
     } else {
       clone[entry.key] = null;
+      onWarning?.call('$method: Property "${entry.key}" is of invalid type. '
+          'Setting value to null.');
     }
 
     if (size > _maxEventSize) return null;
   }
 
   return ValidatedProperties(properties: clone, size: size);
+}
+
+/// Validates `EvaluationOptions.properties` before they are attached to an
+/// impression, with the same rules as `track` properties (spec §4.1, §16).
+///
+/// - Unsupported value types are set to `null` and reported to [onWarning].
+/// - More than 300 entries is reported to [onWarning]; nothing is dropped.
+/// - When the estimated size exceeds 32 KB the properties are dropped (the
+///   evaluation and impression still proceed) and [onError] is called.
+/// - An empty result is treated as absent (`null`).
+Map<String, Object?>? validateEvaluationProperties(
+  Map<String, Object?>? properties, {
+  required String method,
+  void Function(String message)? onWarning,
+  void Function(String message)? onError,
+}) {
+  if (properties == null) return null;
+  final validated =
+      validateProperties(properties, method: method, onWarning: onWarning);
+  if (validated == null) {
+    onError?.call('$method: the maximum size allowed for the properties is '
+        '$_maxEventSize bytes, which was exceeded. The impression will be '
+        'recorded without properties.');
+    return null;
+  }
+  final result = validated.properties;
+  return result == null || result.isEmpty ? null : result;
 }

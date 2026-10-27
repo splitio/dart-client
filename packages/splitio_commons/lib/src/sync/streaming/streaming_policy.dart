@@ -122,15 +122,7 @@ abstract final class StreamingPolicy {
   static ReduceResult _onSocketError(StreamingState s, bool retryable) {
     if (s.connState != ConnState.started) return _noop(s);
     if (!retryable) return _stop(s);
-    final failures = s.consecutiveFailures + 1;
-    final next = s.copyWith(
-      reconnecting: true,
-      consecutiveFailures: failures,
-      // >= 2 consecutive failures drop the connection axis (poll fallback).
-      connectionDown: failures >= 2 ? true : s.connectionDown,
-    );
-    return _finalize(s, next, const [ScheduleReconnect()],
-        connectionDriven: true);
+    return _onRetryableFailure(s);
   }
 
   static ReduceResult _onReconnectTimerFired(StreamingState s) {
@@ -142,9 +134,39 @@ abstract final class StreamingPolicy {
   static ReduceResult _onErrorFrame(StreamingState s, bool isTokenError) {
     if (s.connState != ConnState.started) return _noop(s);
     if (!isTokenError) return _stop(s);
-    // Token error (401 / 40140-40149): re-auth + reconnect.
-    final next = s.copyWith(reconnecting: true);
-    return _finalize(s, next, const [InvalidateToken(), ScheduleReconnect()]);
+    // Token error (401 / 40140-40149) is a retryable failure (§11.3):
+    // additionally invalidate the cached credential so the next connect
+    // re-auths.
+    return _onRetryableFailure(s, invalidateToken: true);
+  }
+
+  /// Every retryable failure — `SocketError(retryable: true)` or a
+  /// token-error `ErrorFrame` — follows the same path (§11.3): close the
+  /// current socket, drop the connection axis (`connectionDown = true`),
+  /// and schedule the **next** backoff step, so consecutive failures grow
+  /// the delay. Token errors additionally invalidate the cached credential.
+  ///
+  /// `connectionDown` is now set UNCONDITIONALLY on every retryable failure
+  /// (the old ">= 2 consecutive failures" threshold is removed per spec).
+  /// [_finalize] is told `forcePushDownNotify: true` so `NotifyPushDisabled`
+  /// fires even when there is no push-gate EDGE — notably on the very first
+  /// failure, when `connectionDown`/`pushUp` already started down and no
+  /// successful connect has ever happened, so there would otherwise never be
+  /// an edge to drive poll fallback.
+  static ReduceResult _onRetryableFailure(
+    StreamingState s, {
+    bool invalidateToken = false,
+  }) {
+    final next = s.copyWith(
+      reconnecting: true,
+      consecutiveFailures: s.consecutiveFailures + 1,
+      connectionDown: true,
+    );
+    final direct = <StreamingEffect>[const CloseCurrentSocket()];
+    if (invalidateToken) direct.add(const InvalidateToken());
+    direct.add(const ScheduleReconnect());
+    return _finalize(s, next, direct,
+        connectionDriven: true, forcePushDownNotify: true);
   }
 
   /// The proactive token-refresh timer fired (§11.3): re-auth + reconnect,
@@ -225,11 +247,19 @@ abstract final class StreamingPolicy {
   ///   also emits [EmitSyncModeChanged] (§11.2). User commands, control
   ///   notifications and occupancy changes never emit it. A push up-edge
   ///   additionally emits a catch-up [Fetch] (§11.3).
+  /// - [forcePushDownNotify] (set by every retryable failure, §11.3): when
+  ///   `true` and the push gate is down in [next] but there was no genuine
+  ///   `pushUp` EDGE (e.g. the connection started — and still is — down, so
+  ///   this is the first failure before any successful connect), a
+  ///   [NotifyPushDisabled] is still emitted so poll fallback is guaranteed
+  ///   to engage. Receivers MUST treat it idempotently. This never emits a
+  ///   duplicate when a genuine edge already added one.
   static ReduceResult _finalize(
     StreamingState prev,
     StreamingState next,
     List<StreamingEffect> direct, {
     bool connectionDriven = false,
+    bool forcePushDownNotify = false,
   }) {
     final effects = <StreamingEffect>[...direct];
 
@@ -244,7 +274,10 @@ abstract final class StreamingPolicy {
       effects.add(const EmitConnected());
     }
 
-    if (!prev.pushUp && next.pushUp) {
+    final pushEdgeUp = !prev.pushUp && next.pushUp;
+    final pushEdgeDown = prev.pushUp && !next.pushUp;
+
+    if (pushEdgeUp) {
       effects.add(const NotifyPushEnabled());
       if (connEdge && connectionDriven) {
         effects.add(const EmitSyncModeChanged(
@@ -253,7 +286,7 @@ abstract final class StreamingPolicy {
         ));
       }
       effects.add(const Fetch());
-    } else if (prev.pushUp && !next.pushUp) {
+    } else if (pushEdgeDown) {
       effects.add(const NotifyPushDisabled());
       if (connEdge && connectionDriven) {
         effects.add(const EmitSyncModeChanged(
@@ -261,6 +294,8 @@ abstract final class StreamingPolicy {
           reason: SyncModeChangeReason.streamingDisconnected,
         ));
       }
+    } else if (forcePushDownNotify && !next.pushUp) {
+      effects.add(const NotifyPushDisabled());
     }
 
     return ReduceResult(next, effects);

@@ -1,6 +1,7 @@
 import 'package:splitio_commons/src/core/core.dart';
 
 import '../matcher.dart';
+import 'semver_attribute.dart';
 
 final class BetweenSemverMatcher extends Matcher {
   final String start;
@@ -10,7 +11,7 @@ final class BetweenSemverMatcher extends Matcher {
   @override
   bool match(Object? value, MatchingContext ctx) {
     if (value is! String) return false;
-    final v = Semver.build(value);
+    final v = parseAttributeSemver(value, ctx, 'BETWEEN_SEMVER');
     final s = Semver.build(start);
     final e = Semver.build(end);
     if (v == null || s == null || e == null) return false;

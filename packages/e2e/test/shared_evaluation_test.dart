@@ -84,12 +84,16 @@ void main() {
         final expectedTreatment = tc['expectedTreatment'] as String;
         final expectedConfig = tc['expectedConfig'] as String?;
 
-        test(testName, () {
+        test(testName, () async {
           final key = Key(
             matchingKey: userKey,
             bucketingKey: bucketingKey,
           );
           client = factory.client(key);
+          // A client is READY only once its own memberships have synced
+          // (spec §8.2), so wait for it instead of relying on the bootstrap
+          // client's readiness.
+          await client.whenReady().timeout(const Duration(seconds: 5));
 
           switch (method) {
             case 'getTreatment':

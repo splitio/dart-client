@@ -1,8 +1,15 @@
 import 'flag_name.dart';
 import 'result.dart';
 
+/// Validates a list of feature flag names (JS `validateDefinitions` parity).
+///
+/// Invalid entries (null/empty) are dropped and reported as ERROR-level
+/// messages: through [onError] when given, otherwise folded into the result's
+/// `warning` for backward compatibility. Whitespace-trimming notices are
+/// always warnings.
 ValidationResult<List<String>> validateFlagNames(
-    List<String>? flags, String method) {
+    List<String>? flags, String method,
+    {void Function(String message)? onError}) {
   if (flags == null || flags.isEmpty) {
     return ValidationResult.fail(
       '$method: feature flag names must be a non-empty array.',
@@ -16,7 +23,11 @@ ValidationResult<List<String>> validateFlagNames(
   for (final f in flags) {
     final r = validateFlagName(f, method);
     if (!r.isValid) {
-      warnings.add(r.error!);
+      if (onError != null) {
+        onError(r.error!);
+      } else {
+        warnings.add(r.error!);
+      }
       continue;
     }
     if (r.warning != null) warnings.add(r.warning!);

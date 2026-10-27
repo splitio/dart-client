@@ -1,3 +1,13 @@
+3.0.0 (October 27, 2026)
+ - BREAKING - `validateKey` trims keys and limits them to 250 characters (was 1024).
+ - BREAKING - `logLevel` defaults to `LogLevel.none`.
+ - BREAKING - `SplitHttpClient` and `ImpressionsManager` require an `sdkVersion`.
+ - BREAKING - `SyncManager` is shared by both flavors and takes a `PollingManager`.
+ - Added server-side segment sync and SEGMENT_UPDATE streaming support.
+ - Added support for compressed streaming notifications.
+ - Added shared client, manager, consent, validation and readiness modules.
+ - Bugfixes for readiness, streaming, recorders, impression properties, matchers and archived flags.
+
 2.0.0 (September 9, 2026)
  - BREAKING: `EvaluationContext` is no longer exported from the `splitio_commons` barrel. Import it from `package:splitio_commons/src/core/evaluation_context.dart` if you still need it, or remove the reference — it was intended as an internal SPI.
  - Fixed: targeting engine now returns the default treatment's dynamic configuration when evaluation short-circuits on prerequisites-not-met or traffic-allocation exclusion (notInSplit).

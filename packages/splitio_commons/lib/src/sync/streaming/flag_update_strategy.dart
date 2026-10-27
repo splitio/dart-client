@@ -1,9 +1,12 @@
 import 'dart:convert';
 
+import 'package:splitio_commons/src/logger/logger.dart';
 import 'package:splitio_commons/src/models/models.dart';
 import 'package:splitio_commons/src/parsing/parsing.dart';
 import 'package:splitio_commons/src/storage/storage.dart';
 
+import '../compression/compression_type.dart';
+import '../compression/notification_payload_decoder.dart';
 import 'notification_processor.dart';
 
 /// Outcome of handling a flag-side [FeedUpdate] (spec §12.1).
@@ -38,18 +41,35 @@ class FlagUpdateResult {
 /// (spec §12.1). Pure of network I/O: it either mutates [_ruleStore] in place
 /// or signals the caller that a fetch fallback is required.
 ///
-/// Decompression is DEFERRED: only `c == 0` (base64-only) `SPLIT_UPDATE`
-/// payloads are applied in place. `c == 1` (gzip), `c == 2` (zlib), and unknown
-/// compression bytes fall back to fetch (safe default per §12.3).
+/// `SPLIT_UPDATE` payloads with `c == 0` (base64 only), `c == 1` (gzip) or
+/// `c == 2` (zlib) are applied in place; unknown compression bytes and decode
+/// errors fall back to fetch (safe default per §12.3). A decode error on a
+/// non-empty `d` is logged at WARNING.
 class FlagUpdateStrategy {
   final InMemoryRuleStore _ruleStore;
   final RuleParser _parser;
+  final void Function(List<String> changedFlags) _onApplied;
+  final NotificationPayloadDecoder _payloadDecoder;
+  final SplitLogger? _logger;
 
+  /// [onApplied] runs the same post-apply side effects a fetched change
+  /// performs — the `whenUpdated`/SDK_UPDATE notification and, on
+  /// server-side, segment registration (spec §12.1) — right after an
+  /// in-place mutation. Callers MUST pass the identical callback wired as
+  /// `FlagsFetcher.onUpdate` so the two paths can never drift on what "a
+  /// flag changed" means. Defaults to a no-op (e.g. for tests that don't
+  /// care about this side effect).
   FlagUpdateStrategy({
     required InMemoryRuleStore ruleStore,
     RuleParser? parser,
-  })  : _ruleStore = ruleStore,
-        _parser = parser ?? RuleParser();
+    void Function(List<String> changedFlags)? onApplied,
+    NotificationPayloadDecoder? payloadDecoder,
+    SplitLogger? logger,
+  })  : _logger = logger,
+        _ruleStore = ruleStore,
+        _parser = parser ?? RuleParser(),
+        _onApplied = onApplied ?? ((_) {}),
+        _payloadDecoder = payloadDecoder ?? const NotificationPayloadDecoder();
 
   /// Handles a flag-side [update], mutating the store in place when safe and
   /// returning whether a fetch is still required. Never throws — any decode or
@@ -71,32 +91,39 @@ class FlagUpdateStrategy {
     final c = payload['c'];
     final d = payload['d'];
 
-    // In-place apply is only safe when the payload is uncompressed (c == 0) and
-    // it applies exactly on top of the currently stored change (pcn matches).
+    // In-place apply is only safe when the compression byte is known (0/1/2)
+    // and it applies exactly on top of the currently stored change (pcn
+    // matches).
     if (changeNumber is! int ||
         pcn is! int ||
-        c != 0 ||
+        CompressionType.fromWire(c) == null ||
         d is! String ||
         pcn != _ruleStore.changeNumber()) {
       return FlagUpdateResult._fetch;
     }
 
     try {
-      final dto = _decodeDefinition(d);
+      final dto = _decodeDefinition(c, d);
       if (dto == null) return FlagUpdateResult._fetch;
       final name = dto['name'] as String?;
       if (name == null || name.isEmpty) return FlagUpdateResult._fetch;
 
-      // parseSplit returns null for ARCHIVED/inactive splits → remove in place.
+      // parseSplit returns null for non-ACTIVE (ARCHIVED/DELETED) splits → remove in place.
       final parsed = _parser.parseSplit(dto);
       _ruleStore.applyChange(
         Change(changeNumber: changeNumber, updates: {name: parsed}),
       );
+      _onApplied([name]);
       return const FlagUpdateResult(
         outcome: FlagUpdateOutcome.appliedInPlace,
         didApplyInPlace: true,
       );
-    } catch (_) {
+    } catch (e) {
+      // An absent or empty `d` falls back silently (JS parity, spec §12.2).
+      if (d.isNotEmpty) {
+        _logger?.warning('Fetching SplitChanges due to an error processing '
+            'SPLIT_UPDATE notification: $e');
+      }
       return FlagUpdateResult._fetch;
     }
   }
@@ -117,15 +144,22 @@ class FlagUpdateStrategy {
         changeNumber > _ruleStore.changeNumber()) {
       final existing = _ruleStore.get(splitName);
       if (existing != null) {
+        // The store-wide `ff` cursor MUST NOT advance from an in-place kill
+        // (spec §10.2): pass the store's OWN current cursor as a no-op, so
+        // the on-demand fetch coordinator still sees the kill's
+        // changeNumber as "ahead" and converges to it via the follow-up
+        // fetch below. The killed split's OWN changeNumber field (set by
+        // _killed) still records the kill's real changeNumber.
         _ruleStore.applyChange(
           Change(
-            changeNumber: changeNumber,
+            changeNumber: _ruleStore.changeNumber(),
             updates: {
               splitName: _killed(existing, defaultTreatment, changeNumber),
             },
           ),
         );
         didApply = true;
+        _onApplied([splitName]);
       }
     }
 
@@ -136,11 +170,11 @@ class FlagUpdateStrategy {
     );
   }
 
-  /// Base64-decode → utf8 → JSON the `SPLIT_UPDATE` definition `d`.
-  /// Returns null when the decoded payload is not a JSON object.
-  Map<String, dynamic>? _decodeDefinition(String d) {
-    final bytes = base64.decode(d);
-    final json = jsonDecode(utf8.decode(bytes));
+  /// Base64-decode → decompress per [c] → utf8 → JSON the `SPLIT_UPDATE`
+  /// definition `d`. Returns null when the decoded payload is not a JSON
+  /// object.
+  Map<String, dynamic>? _decodeDefinition(Object? c, String d) {
+    final json = jsonDecode(_payloadDecoder.text(c, d));
     return json is Map<String, dynamic> ? json : null;
   }
 

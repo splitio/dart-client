@@ -1,5 +1,8 @@
+import 'dart:async';
+
+import 'package:splitio_commons/src/logger/logger.dart';
 import 'package:splitio_commons/src/models/models.dart';
-import 'package:test/test.dart';
+import 'package:test/test.dart' hide Matcher;
 
 import 'test_helpers.dart';
 
@@ -163,6 +166,50 @@ void main() {
     test('compares normalized versions', () {
       // version() preserves metadata, so '1.2.3+build' != '1.2.3'
       expect(matcher.match('1.2.3+build', defaultCtx()), isFalse);
+    });
+  });
+
+  group('unparsable attribute value', () {
+    final matchers = <String, Matcher>{
+      'EQUAL_TO_SEMVER': const EqualToSemverMatcher(version: '1.2.3'),
+      'BETWEEN_SEMVER':
+          const BetweenSemverMatcher(start: '1.0.0', end: '2.0.0'),
+      'GREATER_THAN_OR_EQUAL_TO_SEMVER':
+          const GreaterThanOrEqualToSemverMatcher(version: '1.0.0'),
+      'LESS_THAN_OR_EQUAL_TO_SEMVER':
+          const LessThanOrEqualToSemverMatcher(version: '1.0.0'),
+      'IN_LIST_SEMVER': const InListSemverMatcher(versions: ['1.2.3']),
+    };
+
+    matchers.forEach((name, matcher) {
+      test('$name does not match and logs an ERROR', () {
+        final lines = <String>[];
+        late bool result;
+        runZoned(
+          () => result = matcher.match('not-a-semver',
+              defaultCtx(logger: SplitLogger(level: LogLevel.error))),
+          zoneSpecification: ZoneSpecification(
+            print: (self, parent, zone, line) => lines.add(line),
+          ),
+        );
+        expect(result, isFalse);
+        expect(lines, hasLength(1));
+        expect(lines.single, contains('[ERROR]'));
+        expect(lines.single, contains(name));
+        expect(lines.single, contains('not-a-semver'));
+      });
+    });
+
+    test('a valid semver logs nothing', () {
+      final lines = <String>[];
+      runZoned(
+        () => const EqualToSemverMatcher(version: '1.2.3').match(
+            '1.2.3', defaultCtx(logger: SplitLogger(level: LogLevel.error))),
+        zoneSpecification: ZoneSpecification(
+          print: (self, parent, zone, line) => lines.add(line),
+        ),
+      );
+      expect(lines, isEmpty);
     });
   });
 }

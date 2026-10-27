@@ -78,22 +78,22 @@ void main() {
       expect(treatment, equals('control'));
     });
 
-    test('getTreatments after destroy returns list of control', () async {
+    test('getTreatments after destroy returns map of control', () async {
       await client.destroy();
 
       final treatments = client.getTreatments(['flag1', 'flag2']);
 
-      expect(treatments, equals(['control', 'control']));
+      expect(treatments, equals({'flag1': 'control', 'flag2': 'control'}));
     });
 
-    test('getTreatmentsByFlagSets after destroy returns list of control',
+    test('getTreatmentsByFlagSets after destroy returns map of control',
         () async {
       await client.destroy();
 
       final treatments = client.getTreatmentsByFlagSets(['set1']);
 
       expect(treatments, isEmpty,
-          reason: 'No flags in set, so empty list even after destroy');
+          reason: 'No flags in set, so empty map even after destroy');
     });
 
     test('getTreatmentWithConfig after destroy returns control', () async {
@@ -112,8 +112,8 @@ void main() {
       final results = client.getTreatmentsWithConfig(['flag1', 'flag2']);
 
       expect(results.length, equals(2));
-      expect(results[0].treatment, equals('control'));
-      expect(results[1].treatment, equals('control'));
+      expect(results['flag1']!.treatment, equals('control'));
+      expect(results['flag2']!.treatment, equals('control'));
     });
 
     test('getTreatmentsWithConfigByFlagSets after destroy returns empty',
@@ -163,6 +163,31 @@ void main() {
       expect(flushRecorders.flushCount, equals(1),
           reason:
               'Repeated destroy() MUST be a safe no-op (second call MUST NOT trigger another flush)');
+    });
+
+    test('destroy calls onDestroyed before the final flush (spec §8.5)',
+        () async {
+      final calls = <String>[];
+      final ordered = SplitClientImpl(
+        key: const Key(matchingKey: 'test_user'),
+        evaluator: LocalEvaluator(
+          engine: TargetingEngine(),
+          ruleStore: InMemoryRuleStore(),
+          rbsStore: InMemoryRuleBasedSegmentStore(),
+          membershipStore: InMemoryMembershipStore(),
+        ),
+        impressions: _FakeImpressionsManager(),
+        eventsManager: eventsManager,
+        eventsTracker: eventsTracker,
+        ruleStore: InMemoryRuleStore(),
+        logger: SplitLogger(level: LogLevel.none),
+        flushRecorders: () async => calls.add('flush'),
+        onDestroyed: () async => calls.add('onDestroyed'),
+      );
+
+      await ordered.destroy();
+
+      expect(calls, equals(['onDestroyed', 'flush']));
     });
   });
 }

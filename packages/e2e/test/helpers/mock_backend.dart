@@ -37,8 +37,23 @@ class MockBackend {
   /// Captured POST requests to /events/bulk for assertions.
   final List<RecordedRequest> eventRequests = [];
 
-  /// Captured POST requests to /v1/keys/cs for assertions.
+  /// Captured POST requests to /testImpressions/count for assertions. Kept
+  /// separate from [impressionRequests] because its body shape is a Map
+  /// (`{"pf": [...]}`), not a List, so it is not compatible with the
+  /// [postedImpressions]/[postedImpressionsFlat] getters.
+  final List<RecordedRequest> impressionsCountRequests = [];
+
+  /// Captured POST requests to /v1/keys/cs (client-side MTK) for assertions.
   final List<RecordedRequest> uniqueKeysRequests = [];
+
+  /// Captured POST requests to /v1/keys/ss (server-side MTK) for assertions.
+  final List<RecordedRequest> uniqueKeysSsRequests = [];
+
+  /// Captured GET requests to /segmentChanges/:name for assertions.
+  final List<RecordedRequest> segmentChangesRequests = [];
+
+  /// Captured GET requests to /memberships/:key for assertions.
+  final List<RecordedRequest> membershipsRequests = [];
 
   /// Long-lived SSE stream controllers held open by [stubStreamingOpen], closed
   /// on [shutdown] so the process does not hang.
@@ -66,7 +81,8 @@ class MockBackend {
   /// `[{"f": "feature", "i": [{"k":..,"t":..,"m":..,"c":..,"r":..,?b,?pt}]}]`
   List<Map<String, dynamic>> get postedImpressions {
     final List<Map<String, dynamic>> all = [];
-    for (final req in impressionRequests) {
+    for (final req
+        in impressionRequests.where((r) => r.path.endsWith('/bulk'))) {
       final body = jsonDecode(utf8.decode(req.body)) as List;
       for (final group in body) {
         all.add(Map<String, dynamic>.from(group as Map));
@@ -119,10 +135,97 @@ class MockBackend {
     });
   }
 
+  /// Register a route handler for POST /events/bulk requests.
+  /// Captures each request into [eventRequests] and returns 200.
+  void stubEvents() {
+    _dispatcher.post(RegExp(r'/events/bulk'), (req) {
+      eventRequests.add(req);
+      return MockResponse().setStatusCode(200);
+    });
+  }
+
+  /// Register a custom per-request handler for POST /events/bulk. The
+  /// [handler] receives the request and a 0-based call index (one per POST
+  /// actually sent), letting a test return a transient failure on an early
+  /// call and a success later — used to exercise recorder retry-on-failure
+  /// behavior (spec §13.1).
+  void stubEventsHandler(
+    MockResponse Function(RecordedRequest req, int callIndex) handler,
+  ) {
+    int callIndex = 0;
+    _dispatcher.post(RegExp(r'/events/bulk'), (req) {
+      eventRequests.add(req);
+      return handler(req, callIndex++);
+    });
+  }
+
+  /// Register a custom per-request handler for POST /testImpressions/bulk
+  /// (individual impressions). See [stubEventsHandler] for the call-index
+  /// contract.
+  void stubImpressionsBulkHandler(
+    MockResponse Function(RecordedRequest req, int callIndex) handler,
+  ) {
+    int callIndex = 0;
+    _dispatcher.post(RegExp(r'/testImpressions'), (req) {
+      impressionRequests.add(req);
+      return handler(req, callIndex++);
+    });
+  }
+
+  /// Register a custom per-request handler for POST /testImpressions/count
+  /// (impression counts, OPTIMIZED/NONE modes). See [stubEventsHandler] for
+  /// the call-index contract.
+  void stubImpressionsCountHandler(
+    MockResponse Function(RecordedRequest req, int callIndex) handler,
+  ) {
+    int callIndex = 0;
+    _dispatcher.post(RegExp(r'/testImpressions/count'), (req) {
+      impressionsCountRequests.add(req);
+      return handler(req, callIndex++);
+    });
+  }
+
+  /// Register a custom per-request handler for POST /v1/keys/cs (unique
+  /// matching keys, client-side NONE mode). See [stubEventsHandler] for the
+  /// call-index contract.
+  void stubUniqueKeysHandler(
+    MockResponse Function(RecordedRequest req, int callIndex) handler,
+  ) {
+    int callIndex = 0;
+    _dispatcher.post(RegExp(r'/v1/keys/cs'), (req) {
+      uniqueKeysRequests.add(req);
+      return handler(req, callIndex++);
+    });
+  }
+
+  /// Register a route handler for POST /v1/keys/ss (unique matching keys,
+  /// server-side NONE mode, spec §19.6). Captures each request into
+  /// [uniqueKeysSsRequests] and returns 200.
+  void stubUniqueKeysSs() {
+    _dispatcher.post(RegExp(r'/v1/keys/ss'), (req) {
+      uniqueKeysSsRequests.add(req);
+      return MockResponse().setStatusCode(200);
+    });
+  }
+
+  /// Register a custom per-request handler for POST /v1/keys/ss (unique
+  /// matching keys, server-side NONE mode). See [stubEventsHandler] for the
+  /// call-index contract.
+  void stubUniqueKeysSsHandler(
+    MockResponse Function(RecordedRequest req, int callIndex) handler,
+  ) {
+    int callIndex = 0;
+    _dispatcher.post(RegExp(r'/v1/keys/ss'), (req) {
+      uniqueKeysSsRequests.add(req);
+      return handler(req, callIndex++);
+    });
+  }
+
   /// Register a route handler for GET /memberships/:key requests.
   /// Returns an empty-membership response for any key.
   void stubMemberships() {
     _dispatcher.get(RegExp(r'/memberships/'), (req) {
+      membershipsRequests.add(req);
       return MockResponse()
           .setStatusCode(200)
           .setHeader('Content-Type', 'application/json')
@@ -130,6 +233,59 @@ class MockBackend {
             'ms': {'k': <String>[], 'cn': 1000},
             'ls': {'k': <String>[], 'cn': -1},
           }));
+    });
+  }
+
+  /// Register a custom per-request handler for GET /memberships/:key.
+  /// The [handler] receives the request and a 0-based call index (shared
+  /// across all keys, mirroring [stubSegmentChangesHandler]), letting a test
+  /// return different membership data on later fetches (e.g. the catch-up
+  /// fetch issued when a streaming push connection comes up, spec §11.3) than
+  /// on the initial sync.
+  void stubMembershipsHandler(
+    MockResponse Function(RecordedRequest req, int callIndex) handler,
+  ) {
+    int callIndex = 0;
+    _dispatcher.get(RegExp(r'/memberships/'), (req) {
+      membershipsRequests.add(req);
+      return handler(req, callIndex++);
+    });
+  }
+
+  /// Register a route handler for GET /segmentChanges/:name requests
+  /// (server-side segment refresh, spec §17.2 Axis 3). Captures each request
+  /// and always responds already caught up (`till` equal to the default
+  /// unregistered-segment cursor), which is sufficient for tests that only
+  /// assert a fetch occurred rather than exercising cursor progression.
+  void stubSegmentChanges() {
+    _dispatcher.get(RegExp(r'/segmentChanges/'), (req) {
+      segmentChangesRequests.add(req);
+      final name = req.path.split('/').last;
+      return MockResponse()
+          .setStatusCode(200)
+          .setHeader('Content-Type', 'application/json')
+          .setBody(jsonEncode({
+            'name': name,
+            'added': <String>[],
+            'removed': <String>[],
+            'since': -1,
+            'till': -1,
+          }));
+    });
+  }
+
+  /// Register a custom per-request handler for GET /segmentChanges/:name.
+  /// The [handler] receives the request and a 0-based call index (shared
+  /// across all segment names, mirroring [stubSplitChangesHandler]), so a
+  /// test can return actual membership data instead of the always-empty
+  /// response from [stubSegmentChanges].
+  void stubSegmentChangesHandler(
+    MockResponse Function(RecordedRequest req, int callIndex) handler,
+  ) {
+    int callIndex = 0;
+    _dispatcher.get(RegExp(r'/segmentChanges/'), (req) {
+      segmentChangesRequests.add(req);
+      return handler(req, callIndex++);
     });
   }
 
@@ -187,6 +343,41 @@ class MockBackend {
     });
   }
 
+  /// Register a route handler for GET /sse and /event-stream that delivers
+  /// [events] once and then holds the connection open indefinitely, without
+  /// ever replaying [events] on a later reconnect.
+  ///
+  /// `dart:io`'s [HttpResponse] buffers output by default and only flushes
+  /// it to the socket when the response stream completes (or is explicitly
+  /// flushed, which `package:mock_http_server`'s `addStream`-based writer
+  /// never does) — so bytes queued on a [StreamController] that is never
+  /// closed are NEVER actually transmitted to the client, no matter how
+  /// long the test waits. To actually deliver [events] despite that, the
+  /// FIRST connection enqueues them and then closes the stream immediately
+  /// (same mechanism [stubStreaming] uses, which is proven to flush), so the
+  /// client receives them before the connection naturally ends. A closed
+  /// stream reads as a disconnect to the SSE client, which reconnects; every
+  /// SUBSEQUENT connection (the reconnect, and any later ones) gets an empty
+  /// stream that is held open forever — so [events] are delivered exactly
+  /// once, never replayed. Captures each request like [stubStreaming].
+  void stubStreamingHold({List<SseEvent> events = const []}) {
+    var connectionIndex = 0;
+    _dispatcher.get(RegExp(r'/sse|/event-stream'), (req) {
+      streamingRequests.add(req);
+      final ctrl = StreamController<SseEvent>();
+      _openStreams.add(ctrl);
+      ctrl.add(const SseEvent(event: 'keepalive', data: ''));
+      if (connectionIndex == 0) {
+        for (final event in events) {
+          ctrl.add(event);
+        }
+        unawaited(ctrl.close());
+      }
+      connectionIndex++;
+      return SseResponseBuilder.build(ctrl.stream);
+    });
+  }
+
   /// Register a route handler for GET /sse and /event-stream that opens the SSE
   /// connection and holds it open indefinitely (the stream never ends), so the
   /// connection does NOT terminate and trigger a reconnect. Captures each
@@ -203,6 +394,33 @@ class MockBackend {
       ctrl.add(const SseEvent(event: 'keepalive', data: ''));
       return SseResponseBuilder.build(ctrl.stream);
     });
+  }
+
+  /// Register a route handler for GET /sse and /event-stream that opens the
+  /// SSE connection and holds it open indefinitely (same as
+  /// [stubStreamingOpen]), but returns the underlying [StreamController] so
+  /// the test can push events onto it at a time of its own choosing —
+  /// instead of baking a fixed event list in at stub-registration time (as
+  /// [stubStreaming]/[stubStreamingHold] do).
+  ///
+  /// Used when an event's effect would otherwise race with another
+  /// in-flight async operation triggered by the connection coming up (e.g.
+  /// the push-up membership catch-up fetch, spec §11.3/§12.2): the test can
+  /// wait for that operation to be observably complete (e.g. assert on a
+  /// captured request count) before calling `add` on the returned
+  /// controller, making the ordering deterministic.
+  StreamController<SseEvent> stubStreamingInteractive() {
+    final ctrl = StreamController<SseEvent>();
+    _openStreams.add(ctrl);
+    _dispatcher.get(RegExp(r'/sse|/event-stream'), (req) {
+      streamingRequests.add(req);
+      // Seed a keepalive frame so the HTTP response headers flush
+      // immediately (the client's connect resolves and the SSE connection
+      // is considered open).
+      ctrl.add(const SseEvent(event: 'keepalive', data: ''));
+      return SseResponseBuilder.build(ctrl.stream);
+    });
+    return ctrl;
   }
 
   /// Register a route handler for GET /sse and /event-stream that responds with
@@ -248,7 +466,8 @@ class MockBackend {
     }
 
     _dispatcher.get(RegExp(r'/memberships/'), (req) {
-      final key = req.path.split('/').last;
+      membershipsRequests.add(req);
+      final key = Uri.decodeComponent(req.path.split('/').last);
       final memberships = _buildMembershipsForKey(suiteDir, segmentNames, key);
       return MockResponse()
           .setStatusCode(200)
@@ -364,6 +583,179 @@ class MockBackend {
         'pcn': 1,
         'c': 2,
         'd': '',
+      },
+    );
+  }
+
+  /// Factory to construct an in-place `SPLIT_UPDATE` SSE event: `c: 0`
+  /// (uncompressed) with the flag [definition] inline as base64(utf8(JSON))
+  /// in `d`, and [pcn] matching the SDK's currently-stored change number so
+  /// the in-place apply path (spec §12.1) is taken instead of a fetch
+  /// fallback.
+  static SseEvent splitUpdateInPlaceEvent({
+    required int changeNumber,
+    required int pcn,
+    required Map<String, dynamic> definition,
+  }) {
+    return _ablyEnvelope(
+      channel: 'MzM5Njc0ODcyNg==_MTExMzgwNjgx_splits',
+      notification: {
+        'type': 'SPLIT_UPDATE',
+        'changeNumber': changeNumber,
+        'pcn': pcn,
+        'c': 0,
+        'd': base64.encode(utf8.encode(jsonEncode(definition))),
+      },
+    );
+  }
+
+  /// Factory to construct a `SPLIT_UPDATE` SSE event whose `d` is carried
+  /// verbatim from the caller: [c] is the wire compression byte (`1` gzip,
+  /// `2` zlib, `3` unknown, ...) and [d] the already-encoded base64 payload
+  /// (spec §12.3). Use it for compressed definitions and for unsupported or
+  /// corrupt payloads that [splitUpdateInPlaceEvent] cannot express.
+  static SseEvent splitUpdateCompressedEvent({
+    required int changeNumber,
+    required int pcn,
+    required int c,
+    required String d,
+  }) {
+    return _ablyEnvelope(
+      channel: 'MzM5Njc0ODcyNg==_MTExMzgwNjgx_splits',
+      notification: {
+        'type': 'SPLIT_UPDATE',
+        'changeNumber': changeNumber,
+        'pcn': pcn,
+        'c': c,
+        'd': d,
+      },
+    );
+  }
+
+  /// Factory to construct a `SPLIT_KILL` SSE event (spec §12.1): applied in
+  /// place immediately against the already-stored flag named [splitName].
+  static SseEvent splitKillEvent({
+    required int changeNumber,
+    required String splitName,
+    required String defaultTreatment,
+  }) {
+    return _ablyEnvelope(
+      channel: 'MzM5Njc0ODcyNg==_MTExMzgwNjgx_splits',
+      notification: {
+        'type': 'SPLIT_KILL',
+        'changeNumber': changeNumber,
+        'splitName': splitName,
+        'defaultTreatment': defaultTreatment,
+      },
+    );
+  }
+
+  /// Factory to construct a server-side `SEGMENT_UPDATE` SSE event (spec
+  /// §17.2 Axis 3): signals that [segmentName]'s own cursor has moved to
+  /// [changeNumber], with no membership delta inline — the SDK MUST fetch
+  /// `GET /segmentChanges/[segmentName]` to catch up.
+  static SseEvent segmentUpdateEvent({
+    required String segmentName,
+    required int changeNumber,
+  }) {
+    return _ablyEnvelope(
+      channel: 'MzM5Njc0ODcyNg==_MTExMzgwNjgx_segments',
+      notification: {
+        'type': 'SEGMENT_UPDATE',
+        'changeNumber': changeNumber,
+        'segmentName': segmentName,
+      },
+    );
+  }
+
+  /// Factory to construct a client-side membership-channel `SEGMENT_REMOVAL`
+  /// SSE event (`u: 3`, spec §12.2): applied in place against the matching
+  /// key's already-stored membership set, removing [names] (no hashing —
+  /// unlike `u: 2` KEY_LIST, the removal payload lists segment names
+  /// directly). Set [isLarge] to target the large-segments channel/set
+  /// instead of my-segments.
+  static SseEvent membershipsSegmentRemovalEvent({
+    required int changeNumber,
+    required List<String> names,
+    bool isLarge = false,
+  }) {
+    return _ablyEnvelope(
+      channel: isLarge
+          ? 'MzM5Njc0ODcyNg==_MTExMzgwNjgx_ls_segments'
+          : 'MzM5Njc0ODcyNg==_MTExMzgwNjgx_ms_segments',
+      notification: {
+        'type': isLarge ? 'MEMBERSHIPS_LS_UPDATE' : 'MEMBERSHIPS_MS_UPDATE',
+        'cn': changeNumber,
+        'u': 3,
+        'n': names,
+      },
+    );
+  }
+
+  /// Factory to construct a client-side membership-channel update SSE event
+  /// (spec §12.2) with the notification fields passed through as given: [u]
+  /// is the update strategy (`0` unbounded, `1` bounded, `2` key list, `3`
+  /// segment removal), [c]/[d] the wire compression byte and base64 payload
+  /// (bitmap for `u: 1`, key list for `u: 2`), [n] the segment names and [h]
+  /// the jitter hash algorithm (`0` disables the fetch jitter, making fetch
+  /// timing deterministic). Optional fields left `null` are omitted. Set
+  /// [isLarge] to target the large-segments channel/set.
+  static SseEvent membershipsUpdateEvent({
+    required int u,
+    required int changeNumber,
+    int? c,
+    String? d,
+    List<String>? n,
+    int? h,
+    int? i,
+    int? s,
+    bool isLarge = false,
+  }) {
+    return _ablyEnvelope(
+      channel: isLarge
+          ? 'MzM5Njc0ODcyNg==_MTExMzgwNjgx_ls_segments'
+          : 'MzM5Njc0ODcyNg==_MTExMzgwNjgx_ms_segments',
+      notification: {
+        'type': isLarge ? 'MEMBERSHIPS_LS_UPDATE' : 'MEMBERSHIPS_MS_UPDATE',
+        'cn': changeNumber,
+        'u': u,
+        if (c != null) 'c': c,
+        if (d != null) 'd': d,
+        if (n != null) 'n': n,
+        if (h != null) 'h': h,
+        if (i != null) 'i': i,
+        if (s != null) 's': s,
+      },
+    );
+  }
+
+  /// Build an OCCUPANCY SSE event reporting [publishers] subscribers on the
+  /// control channel's occupancy meta-channel (spec §11.4). `publishers: 0`
+  /// drives push DOWN (poll fallback); a subsequent non-zero value drives
+  /// push back UP, which MUST trigger a catch-up `Fetch` (§11.3).
+  static SseEvent occupancyEvent({required int publishers}) {
+    return _ablyEnvelope(
+      channel: '[?occupancy=metrics.subscribers]control_pri',
+      notification: {
+        'type': 'OCCUPANCY',
+        'metrics': {'publishers': publishers},
+      },
+    );
+  }
+
+  /// Build a CONTROL SSE event with the given wire [controlType] (e.g.
+  /// `STREAMING_PAUSED`/`STREAMING_RESUMED`) and [timestamp] (spec §11.3's
+  /// control-type → FSM event mapping table).
+  static SseEvent controlEvent({
+    required String controlType,
+    required int timestamp,
+  }) {
+    return _ablyEnvelope(
+      channel: 'control_pri',
+      notification: {
+        'type': 'CONTROL',
+        'controlType': controlType,
+        'timestamp': timestamp,
       },
     );
   }

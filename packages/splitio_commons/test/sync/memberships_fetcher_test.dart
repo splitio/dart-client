@@ -45,12 +45,36 @@ MembershipsFetcher _createFetcher({
 
 void main() {
   group('MembershipsFetcher', () {
+    test('percent-encodes the key as a single path segment', () async {
+      final paths = <String>[];
+      final mockClient = MockClient((request) async {
+        paths.add(request.url.path);
+        return http.Response(_membershipsResponse, 200);
+      });
+      final httpClient = SplitHttpClient(
+          sdkVersion: 'dart_test-1.0.0',
+          apiKey: 'test-key',
+          client: mockClient);
+      final fetcher = _createFetcher(httpClient: httpClient);
+
+      await fetcher.fetchForKey('a/b c');
+      await fetcher.fetchForKey('ñandú');
+
+      expect(paths, [
+        '/api/memberships/a%2Fb%20c',
+        '/api/memberships/%C3%B1and%C3%BA',
+      ]);
+      httpClient.close();
+    });
+
     test('fetch returns false when no key is bound', () async {
       final mockClient = MockClient((request) async {
         return http.Response('{}', 200);
       });
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
+      final httpClient = SplitHttpClient(
+          sdkVersion: 'dart_test-1.0.0',
+          apiKey: 'test-key',
+          client: mockClient);
 
       final fetcher = _createFetcher(httpClient: httpClient);
       final result = await fetcher.fetch();
@@ -63,8 +87,10 @@ void main() {
       final mockClient = MockClient((request) async {
         return http.Response(_membershipsResponse, 200);
       });
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
+      final httpClient = SplitHttpClient(
+          sdkVersion: 'dart_test-1.0.0',
+          apiKey: 'test-key',
+          client: mockClient);
       final store = InMemoryMembershipStore();
 
       final fetcher = _createFetcher(
@@ -88,8 +114,10 @@ void main() {
         capturedPath = request.url.path;
         return http.Response(_membershipsResponse, 200);
       });
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
+      final httpClient = SplitHttpClient(
+          sdkVersion: 'dart_test-1.0.0',
+          apiKey: 'test-key',
+          client: mockClient);
       final store = InMemoryMembershipStore();
 
       final fetcher = _createFetcher(
@@ -111,8 +139,10 @@ void main() {
         capturedCacheControl = request.headers['cache-control'];
         return http.Response(_membershipsResponse, 200);
       });
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
+      final httpClient = SplitHttpClient(
+          sdkVersion: 'dart_test-1.0.0',
+          apiKey: 'test-key',
+          client: mockClient);
 
       final fetcher = _createFetcher(httpClient: httpClient);
       fetcher.bindKey('user1');
@@ -126,8 +156,10 @@ void main() {
       final mockClient = MockClient((request) async {
         return http.Response('Unauthorized', 401);
       });
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
+      final httpClient = SplitHttpClient(
+          sdkVersion: 'dart_test-1.0.0',
+          apiKey: 'test-key',
+          client: mockClient);
 
       final fetcher = _createFetcher(httpClient: httpClient);
       fetcher.bindKey('user1');
@@ -142,8 +174,10 @@ void main() {
       final mockClient = MockClient((request) async {
         return http.Response(_membershipsResponse, 200);
       });
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
+      final httpClient = SplitHttpClient(
+          sdkVersion: 'dart_test-1.0.0',
+          apiKey: 'test-key',
+          client: mockClient);
 
       final fetcher = _createFetcher(httpClient: httpClient);
 
@@ -165,8 +199,10 @@ void main() {
         attempts++;
         throw Exception('connection refused');
       });
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
+      final httpClient = SplitHttpClient(
+          sdkVersion: 'dart_test-1.0.0',
+          apiKey: 'test-key',
+          client: mockClient);
 
       final fetcher = MembershipsFetcher(
         httpClient: httpClient,
@@ -190,8 +226,10 @@ void main() {
       final mockClient = MockClient((request) async {
         return http.Response(_membershipsWithLargeSegments, 200);
       });
-      final httpClient =
-          SplitHttpClient(apiKey: 'test-key', client: mockClient);
+      final httpClient = SplitHttpClient(
+          sdkVersion: 'dart_test-1.0.0',
+          apiKey: 'test-key',
+          client: mockClient);
       final store = InMemoryMembershipStore();
 
       final fetcher = _createFetcher(
@@ -204,6 +242,146 @@ void main() {
       expect(result, isTrue);
       expect(store.isInSegment('segment_a', 'user1'), isTrue);
       expect(store.isInSegment('large_seg_1', 'user1'), isTrue);
+      httpClient.close();
+    });
+
+    test('fetchForKey invokes onKeyResult with the key and outcome', () async {
+      final results = <(String, bool)>[];
+      final mockClient = MockClient((request) async {
+        return http.Response(_membershipsResponse, 200);
+      });
+      final httpClient = SplitHttpClient(
+          sdkVersion: 'dart_test-1.0.0',
+          apiKey: 'test-key',
+          client: mockClient);
+
+      final fetcher = MembershipsFetcher(
+        httpClient: httpClient,
+        log: SplitLogger(level: LogLevel.none),
+        baseUrl: 'https://sdk.split.io/api',
+        processor:
+            MembershipsProcessor(membershipStore: InMemoryMembershipStore()),
+        onKeyResult: (key, success) => results.add((key, success)),
+      );
+
+      final result = await fetcher.fetchForKey('user1');
+
+      expect(result, isTrue);
+      expect(results, equals([('user1', true)]));
+      httpClient.close();
+    });
+
+    test(
+        'fetch (aggregate) invokes onKeyResult once per bound key via '
+        'fetchForKey, including on failure', () async {
+      final results = <(String, bool)>[];
+      final mockClient = MockClient((request) async {
+        return http.Response('Unauthorized', 401);
+      });
+      final httpClient = SplitHttpClient(
+          sdkVersion: 'dart_test-1.0.0',
+          apiKey: 'test-key',
+          client: mockClient);
+
+      final fetcher = MembershipsFetcher(
+        httpClient: httpClient,
+        log: SplitLogger(level: LogLevel.none),
+        baseUrl: 'https://sdk.split.io/api',
+        processor:
+            MembershipsProcessor(membershipStore: InMemoryMembershipStore()),
+        onKeyResult: (key, success) => results.add((key, success)),
+      );
+      fetcher.bindKey('user1');
+
+      final result = await fetcher.fetch();
+
+      expect(result, isFalse);
+      expect(results, equals([('user1', false)]));
+      httpClient.close();
+    });
+
+    // whenUpdated() wiring (spec §4.6/§8.2, BUG #12): onUpdate MUST fire
+    // when fetchForKey actually changes the key's membership set, and MUST
+    // NOT fire when the fetched state is identical to what's stored.
+    test('fetchForKey invokes onUpdate when the membership set changes',
+        () async {
+      final updated = <String>[];
+      final mockClient = MockClient((request) async {
+        return http.Response(_membershipsResponse, 200);
+      });
+      final httpClient = SplitHttpClient(
+          sdkVersion: 'dart_test-1.0.0',
+          apiKey: 'test-key',
+          client: mockClient);
+
+      final fetcher = MembershipsFetcher(
+        httpClient: httpClient,
+        log: SplitLogger(level: LogLevel.none),
+        baseUrl: 'https://sdk.split.io/api',
+        processor:
+            MembershipsProcessor(membershipStore: InMemoryMembershipStore()),
+        onUpdate: updated.add,
+      );
+
+      final result = await fetcher.fetchForKey('user1');
+
+      expect(result, isTrue);
+      expect(updated, equals(['user1']));
+      httpClient.close();
+    });
+
+    test(
+        'fetchForKey does NOT invoke onUpdate when the fetched membership '
+        'set is identical to what is already stored', () async {
+      final updated = <String>[];
+      final mockClient = MockClient((request) async {
+        return http.Response(_membershipsResponse, 200);
+      });
+      final httpClient = SplitHttpClient(
+          sdkVersion: 'dart_test-1.0.0',
+          apiKey: 'test-key',
+          client: mockClient);
+      final store = InMemoryMembershipStore();
+
+      final fetcher = MembershipsFetcher(
+        httpClient: httpClient,
+        log: SplitLogger(level: LogLevel.none),
+        baseUrl: 'https://sdk.split.io/api',
+        processor: MembershipsProcessor(membershipStore: store),
+        onUpdate: updated.add,
+      );
+
+      await fetcher.fetchForKey('user1'); // first delivery — a real change
+      updated.clear();
+      final result = await fetcher.fetchForKey('user1'); // identical re-poll
+
+      expect(result, isTrue);
+      expect(updated, isEmpty);
+      httpClient.close();
+    });
+
+    test('notifyUpdate(key) calls through to the onUpdate callback', () async {
+      final updated = <String>[];
+      final mockClient = MockClient((request) async {
+        return http.Response('{}', 200);
+      });
+      final httpClient = SplitHttpClient(
+          sdkVersion: 'dart_test-1.0.0',
+          apiKey: 'test-key',
+          client: mockClient);
+
+      final fetcher = MembershipsFetcher(
+        httpClient: httpClient,
+        log: SplitLogger(level: LogLevel.none),
+        baseUrl: 'https://sdk.split.io/api',
+        processor:
+            MembershipsProcessor(membershipStore: InMemoryMembershipStore()),
+        onUpdate: updated.add,
+      );
+
+      fetcher.notifyUpdate('user1');
+
+      expect(updated, equals(['user1']));
       httpClient.close();
     });
   });
